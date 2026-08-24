@@ -9,6 +9,15 @@ export type BaseType = 'box' | 'hbox' | 'cyl' | 'cup' | 'stl';
 /** Cutter shapes. `gap` is a box with wide defaults; `groove` is a cylinder buried below the surface. */
 export type CutterType = 'cyl' | 'box' | 'hex' | 'gap' | 'groove';
 
+/**
+ * Which axis of an imported STL points up.
+ *
+ * STL carries no unit or orientation metadata, but the de-facto convention across CAD
+ * and every slicer is Z-up, while three.js is Y-up. Files exported from a Y-up tool
+ * (some Blender setups) need the other setting.
+ */
+export type UpAxis = 'z' | 'y';
+
 export interface CutterParams {
   /** cyl + groove: hole diameter (mm) */
   dia?: number;
@@ -66,6 +75,8 @@ export interface BaseSpec {
   stlD: number;
   stlH: number;
   stlTris: number;
+  /** Interpretation of the imported file's axes; the stored mesh is never re-baked. */
+  stlUpAxis: UpAxis;
 }
 
 /** Which hole the mating insert is generated from. */
@@ -105,6 +116,7 @@ export function initialState(): AppState {
       stlD: 0,
       stlH: 0,
       stlTris: 0,
+      stlUpAxis: 'z',
     },
     cutters: [],
     groups: {},

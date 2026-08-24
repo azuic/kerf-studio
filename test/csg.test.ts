@@ -16,7 +16,14 @@
  * genuine defect.
  */
 import { buildBody, buildInsert } from '../src/csg/booleans';
-import { checkMesh, encodeBinarySTL, parseSTL } from '../src/io/stl';
+import {
+  boundsOf,
+  centerOnPlate,
+  checkMesh,
+  encodeBinarySTL,
+  orientToYUp,
+  parseSTL,
+} from '../src/io/stl';
 import { defaultParams } from '../src/model/geometry';
 import type { BaseSpec, Cutter } from '../src/types';
 import { initialState } from '../src/types';
@@ -270,6 +277,53 @@ console.log('\nplain insert fits its hole');
 
   const bigger = buildInsert({ kind: 'cutter', cutter: c }, 0.05, false, 60);
   ok('tighter clearance means more material', volume(bigger.position) > volume(ins.position));
+}
+
+console.log('\nimported STL orientation');
+{
+  // A tall box authored Y-up: 10 wide (X), 20 deep (Z), 40 tall (Y).
+  const upright = buildBody(baseOf({ type: 'box', w: 10, d: 20, h: 40 }), [], null).position;
+
+  // The same solid as a Z-up file writes it: undo the Z-up→Y-up rotation, so
+  // (x, y, z) → (x, −z, y). This is what a CAD/slicer STL actually contains.
+  const zUpFile = new Float32Array(upright);
+  for (let i = 0; i < zUpFile.length; i += 3) {
+    const y = zUpFile[i + 1];
+    zUpFile[i + 1] = -zUpFile[i + 2];
+    zUpFile[i + 2] = y;
+  }
+  const fileBounds = boundsOf(zUpFile);
+  ok(
+    'the Z-up file really is lying on its side in raw coords',
+    Math.abs(fileBounds.maxY - fileBounds.minY - 20) < 1e-4,
+    `raw Y extent ${(fileBounds.maxY - fileBounds.minY).toFixed(1)} mm`,
+  );
+
+  const asZ = orientToYUp(zUpFile, 'z');
+  const zBounds = centerOnPlate(asZ);
+  near('Z-up import: height', zBounds.maxY, 40, 0.01);
+  near('Z-up import: width X', zBounds.maxX - zBounds.minX, 10, 0.01);
+  near('Z-up import: depth Z', zBounds.maxZ - zBounds.minZ, 20, 0.01);
+  ok('Z-up import sits on the plate', Math.abs(zBounds.minY) < 1e-6, `minY ${zBounds.minY}`);
+  near('rotation preserves volume and winding', volume(asZ), 8_000, 0.01);
+  closed('re-oriented mesh', asZ);
+
+  // Misreading the same file as Y-up must tip it over — that was the ported bug.
+  const asY = orientToYUp(zUpFile, 'y');
+  const yBounds = centerOnPlate(asY);
+  near('Y-up reading: height is the wrong axis', yBounds.maxY, 20, 0.01);
+  ok('the two readings differ', Math.abs(zBounds.maxY - yBounds.maxY) > 1, 'tipped 90°');
+  ok('but both still sit on the plate', Math.abs(yBounds.minY) < 1e-6);
+
+  // Orienting must never mutate the caller's buffer, or flipping the axis twice
+  // would compound rotations.
+  const after = boundsOf(zUpFile);
+  ok(
+    'the raw file is left untouched',
+    after.minY === fileBounds.minY && after.maxY === fileBounds.maxY,
+  );
+  const twice = centerOnPlate(orientToYUp(zUpFile, 'z'));
+  near('re-orienting is idempotent', twice.maxY, 40, 0.01);
 }
 
 console.log('\nSTL round-trip');

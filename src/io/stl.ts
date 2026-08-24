@@ -4,6 +4,7 @@
  * Ported from the v1 prototype — the parser and the binary writer both worked; only
  * their data type changed (triangle-soup Float32Array instead of BSP polygons).
  */
+import type { UpAxis } from '../types';
 
 export interface ParsedStl {
   positions: Float32Array;
@@ -82,7 +83,27 @@ export function boundsOf(positions: Float32Array): Bounds {
   return b;
 }
 
-/** Centre in XZ and drop min-Y to the plate, matching the v1 import convention. */
+/**
+ * Rotate an imported mesh so its up axis is +Y, which is what the viewport and every
+ * cutter assume.
+ *
+ * STL stores no orientation metadata. The convention across CAD tools and slicers is
+ * Z-up, so that is the default; passing 'y' leaves the mesh alone for files that were
+ * already authored Y-up. The Z-up case is a −90° rotation about X, (x, y, z) → (x, z, −y),
+ * a proper rotation, so triangle winding is preserved.
+ */
+export function orientToYUp(positions: Float32Array, up: UpAxis): Float32Array {
+  const out = new Float32Array(positions);
+  if (up === 'y') return out;
+  for (let i = 0; i < out.length; i += 3) {
+    const y = out[i + 1];
+    out[i + 1] = out[i + 2];
+    out[i + 2] = -y;
+  }
+  return out;
+}
+
+/** Centre in XZ and drop min-Y to the plate. */
 export function centerOnPlate(positions: Float32Array): Bounds {
   const b = boundsOf(positions);
   const cx = (b.minX + b.maxX) / 2;

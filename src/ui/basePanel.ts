@@ -1,9 +1,14 @@
 import { checkMesh } from '../io/stl';
-import { getStlPositions } from '../state/assets';
-import type { AppState, BaseType } from '../types';
+import { getStlRaw } from '../state/assets';
+import type { AppState, BaseType, UpAxis } from '../types';
 import { baseHeight, baseSpanX, baseSpanZ } from '../types';
 import type { Panel, UiContext } from './context';
 import { btnrow, button, labeled, numField, section, select, type NumField } from './fields';
+
+const UP_AXES: { value: UpAxis; label: string }[] = [
+  { value: 'z', label: 'Z up (CAD default)' },
+  { value: 'y', label: 'Y up' },
+];
 
 const BASE_TYPES: { value: BaseType; label: string }[] = [
   { value: 'box', label: 'Solid box' },
@@ -45,6 +50,12 @@ export function createBasePanel(ctx: UiContext): Panel {
       file,
     ),
   );
+
+  // Only meaningful for an imported mesh; hidden for the parametric bases.
+  const upSelect = select((v) => ctx.setStlUpAxis(v as UpAxis));
+  upSelect.setOptions(UP_AXES, ctx.store.state.base.stlUpAxis);
+  const upRow = labeled('Up axis in file', upSelect.el);
+  body.appendChild(upRow);
 
   const info = document.createElement('div');
   info.className = 'readout';
@@ -90,7 +101,8 @@ export function createBasePanel(ctx: UiContext): Panel {
       d.className = 'hint';
       d.textContent = b.stlName
         ? `Loaded: ${b.stlName}`
-        : 'Use “Import STL…” to load a model. It is centred in XZ and dropped onto the plate.';
+        : 'Use “Import STL…” to load a model. It is read as Z-up (the CAD convention), ' +
+          'rotated to stand upright, centred in XZ and dropped onto the plate.';
       dims.appendChild(d);
     }
 
@@ -126,6 +138,8 @@ export function createBasePanel(ctx: UiContext): Panel {
       else syncDims(state);
 
       const b = state.base;
+      upRow.style.display = b.type === 'stl' && b.stlName ? '' : 'none';
+      upSelect.setOptions(UP_AXES, b.stlUpAxis);
       info.textContent =
         `footprint ${baseSpanX(b).toFixed(1)} × ${baseSpanZ(b).toFixed(1)} mm · ` +
         `height ${baseHeight(b).toFixed(1)} mm` +
@@ -147,7 +161,7 @@ let lastCheckText = '';
 
 function describeMesh(state: AppState): string {
   if (state.base.type !== 'stl') return '';
-  const positions = getStlPositions();
+  const positions = getStlRaw();
   if (!positions) return '';
   if (state.base.stlName === lastCheckedName) return lastCheckText;
 

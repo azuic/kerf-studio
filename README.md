@@ -16,10 +16,12 @@ npm test           # headless geometry checks
 
 ## What it does
 
-- **Base model** — solid or hollow box, solid cylinder or cup, or an imported STL
-  (centred in XZ and dropped onto the plate). Imported meshes are checked for open and
-  non-manifold edges on load, because a boolean against a mesh that is not watertight
-  produces wrong results in any CSG engine.
+- **Base model** — solid or hollow box, solid cylinder or cup, or an imported STL.
+  STL carries no orientation metadata, so imports are read as **Z-up** (what CAD tools
+  and slicers write), rotated upright, centred in XZ and dropped onto the plate; an
+  **Up axis** control re-seats the mesh without a re-import for the rarer Y-up files.
+  Imported meshes are checked for open and non-manifold edges on load, because a boolean
+  against a mesh that is not watertight produces wrong results in any CSG engine.
 - **Cutters** — round, rectangular and hex holes, wall gaps, and lock grooves. Each has
   a depth, a start offset below the top surface, an XZ position and a Y rotation. Cuts
   always run downward; a cut starting at the surface is extended 1 mm above it so the
@@ -75,7 +77,9 @@ edge-pairing check (`checkMesh`) is therefore reserved for imported STLs, where 
 unmatched edge is a genuine defect worth warning about.
 
 `node test/browser-run.mjs` runs the worker checks in headless Chrome; pass a URL and a
-selector to point it at the app itself.
+selector to point it at the app itself. `node test/import-check.mjs` feeds a real Z-up
+binary STL through the running app's file input and asserts the dimensions it reports —
+both need `npm run dev` in another shell.
 
 ## Known gaps
 

@@ -52,6 +52,7 @@ BaseSpec = {
   r,                // cylinder radius
   wall, floor,      // hollow types
   stlName, stlW, stlD, stlH, stlTris,   // descriptive only — see below
+  stlUpAxis: 'z' | 'y',                 // how to read the imported file's axes
 }
 
 Cutter = {
@@ -75,6 +76,15 @@ BayonetParams = { dia, lugW, lugLen, lugTh, grooveH, depth, x, z }
 ~1 MB of floats and JSON-snapshotting that on every slider tick would make undo
 unusable. The buffer lives in `state/assets.ts`; the state keeps only the descriptive
 fields. `.kerf.json` carries the mesh as base64 alongside the state.
+
+**STL orientation.** STL stores no units and no orientation, but every CAD tool and
+slicer writes **Z-up**, while three.js is Y-up. The v1 prototype read the file's Y as up
+(`geom.translate(-cx, -bb.min.y, -cz)` with no rotation), so a normal STL imported tipped
+90° onto its back. Imports are now rotated Z-up → Y-up — `(x, y, z) → (x, z, −y)`, a
+proper rotation so winding is preserved — then centred and dropped onto the plate.
+`assets.ts` keeps the file **exactly as parsed** and derives the seated copy on demand,
+so flipping `stlUpAxis` re-seats the mesh without a re-import and never compounds
+rotations. `.kerf.json` stores the raw file plus the axis, keeping load idempotent.
 
 **Cutter positioning convention** (unchanged, and worth keeping under any engine): cuts
 always go downward (−Y). The cutter solid's top sits at `baseHeight − topOffset`; its
@@ -130,6 +140,7 @@ for the worker's lifetime.
 | Export | Purpose |
 |---|---|
 | `parseSTL(buf)` | ASCII detect: starts with "solid" AND contains "facet"; else binary (validates 84 + n·50 length) |
+| `orientToYUp(positions, up)` | Rotates a Z-up file upright; returns a new buffer, never mutates the input |
 | `centerOnPlate(positions)` | Centres in XZ, drops min-Y to 0 |
 | `checkMesh(positions)` | Open / non-manifold / degenerate counts. For **imported** meshes only — see §4 |
 | `encodeBinarySTL` / `downloadSTL` | Binary STL, little-endian, per-face normals recomputed, mm |

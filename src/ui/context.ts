@@ -1,5 +1,5 @@
 import type { Store } from '../state/store';
-import type { AppState } from '../types';
+import type { AppState, UpAxis } from '../types';
 
 /** What panels are allowed to ask the app to do. Implemented in ui/app.ts. */
 export interface UiContext {
@@ -11,6 +11,8 @@ export interface UiContext {
   generateInsert(): void;
   clearInsert(): void;
   importStl(file: File): void;
+  /** Re-interpret which axis of the imported file points up, and reseat it on the plate. */
+  setStlUpAxis(axis: UpAxis): void;
   exportBody(): void;
   exportInsert(): void;
   saveProject(): void;

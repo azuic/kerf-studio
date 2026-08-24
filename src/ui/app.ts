@@ -7,12 +7,12 @@ import {
   loadAutosave,
   saveAutosave,
 } from '../io/project';
-import { centerOnPlate, downloadSTL, parseSTL } from '../io/stl';
+import { downloadSTL, parseSTL } from '../io/stl';
 import { cutterSolid } from '../model/geometry';
-import { getStlPositions, setStlPositions } from '../state/assets';
+import { getOrientedStl, getStlRaw, setStlRaw } from '../state/assets';
 import { Store } from '../state/store';
 import { Viewport } from '../scene/viewport';
-import type { AppState } from '../types';
+import type { AppState, UpAxis } from '../types';
 import { baseHeight, baseSpanX, baseSpanZ, initialState, insertPreviewX } from '../types';
 import { createBasePanel } from './basePanel';
 import { createCutterPanel } from './cutterPanel';
@@ -45,7 +45,7 @@ export class App implements UiContext {
 
     const restored = loadAutosave();
     this.store = new Store(restored?.state ?? initialState());
-    if (restored?.stl) setStlPositions(restored.stl);
+    if (restored?.stl) setStlRaw(restored.stl);
 
     this.engine.onTiming = (ms, tris) => {
       this.status(`${tris.toLocaleString()} triangles · boolean ${ms} ms`);
@@ -69,8 +69,8 @@ export class App implements UiContext {
     this.renderPanels();
 
     // A restored STL must reach the worker before the first boolean runs.
-    const stl = getStlPositions();
-    const ready = stl ? this.engine.setStl(stl) : Promise.resolve();
+    const stl = getOrientedStl(this.store.state.base.stlUpAxis);
+    const ready = stl ? this.engine.setStl(stl.positions) : Promise.resolve();
     void ready.then(() => this.computeNow());
   }
 
@@ -197,18 +197,18 @@ export class App implements UiContext {
     reader.onload = () => {
       try {
         const parsed = parseSTL(reader.result as ArrayBuffer);
-        const bounds = centerOnPlate(parsed.positions);
-        setStlPositions(parsed.positions);
+        setStlRaw(parsed.positions);
 
         this.store.update((s) => {
           s.base.type = 'stl';
           s.base.stlName = file.name;
-          s.base.stlW = bounds.maxX - bounds.minX;
-          s.base.stlD = bounds.maxZ - bounds.minZ;
-          s.base.stlH = bounds.maxY;
           s.base.stlTris = parsed.triangles;
+          // STL carries no orientation metadata; Z-up is the convention every CAD tool
+          // and slicer writes, so a fresh import always starts there.
+          s.base.stlUpAxis = 'z';
           if (parsed.triangles > BIG_MESH_TRIS) s.autoPreview = false;
         });
+        this.applyStlOrientation();
 
         if (parsed.triangles > BIG_MESH_TRIS) {
           this.status(
@@ -216,10 +216,6 @@ export class App implements UiContext {
               `Use “Apply cuts now”.`,
           );
         }
-
-        const s = this.store.state;
-        this.viewport.frame(baseSpanX(s.base), baseSpanZ(s.base), baseHeight(s.base));
-        void this.engine.setStl(parsed.positions).then(() => this.computeNow());
       } catch (err) {
         this.status(
           `Could not read this STL: ${err instanceof Error ? err.message : String(err)}`,
@@ -228,6 +224,40 @@ export class App implements UiContext {
       }
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  setStlUpAxis(axis: UpAxis): void {
+    if (this.store.state.base.stlUpAxis === axis) return;
+    this.store.update((s) => {
+      s.base.stlUpAxis = axis;
+    });
+    this.applyStlOrientation();
+  }
+
+  /**
+   * Re-derive the seated mesh for the current up axis, refresh the recorded dimensions,
+   * reframe the camera and hand the new buffer to the worker.
+   *
+   * Cutter depths are measured down from the model top, so the dimensions have to be
+   * updated before the next boolean runs or every cut lands at the wrong height.
+   */
+  private applyStlOrientation(): void {
+    const oriented = getOrientedStl(this.store.state.base.stlUpAxis);
+    if (!oriented) return;
+    const { bounds } = oriented;
+
+    this.store.update(
+      (s) => {
+        s.base.stlW = bounds.maxX - bounds.minX;
+        s.base.stlD = bounds.maxZ - bounds.minZ;
+        s.base.stlH = bounds.maxY;
+      },
+      { transient: true },
+    );
+
+    const b = this.store.state.base;
+    this.viewport.frame(baseSpanX(b), baseSpanZ(b), baseHeight(b));
+    void this.engine.setStl(oriented.positions).then(() => this.computeNow());
   }
 
   exportBody(): void {
@@ -253,7 +283,9 @@ export class App implements UiContext {
   }
 
   saveProject(): void {
-    downloadProject(this.store.state, getStlPositions(), 'model.kerf.json');
+    // The raw file goes in, not the seated copy — the up axis is recorded in the state,
+    // so re-orienting on load stays idempotent.
+    downloadProject(this.store.state, getStlRaw(), 'model.kerf.json');
     this.status('Saved model.kerf.json');
   }
 
@@ -263,13 +295,18 @@ export class App implements UiContext {
     reader.onload = () => {
       try {
         const { state, stl } = deserializeProject(String(reader.result));
-        setStlPositions(stl);
+        setStlRaw(stl);
         this.store.replace(state);
         this.insertPayload = null;
         this.viewport.setInsert(null);
-        this.viewport.frame(baseSpanX(state.base), baseSpanZ(state.base), baseHeight(state.base));
-        const ready = stl ? this.engine.setStl(stl) : this.engine.clearStl();
-        void ready.then(() => this.computeNow());
+
+        const oriented = stl ? getOrientedStl(state.base.stlUpAxis) : null;
+        if (oriented) {
+          this.applyStlOrientation();
+        } else {
+          this.viewport.frame(baseSpanX(state.base), baseSpanZ(state.base), baseHeight(state.base));
+          void this.engine.clearStl().then(() => this.computeNow());
+        }
         this.status(`Loaded ${file.name}`);
       } catch (err) {
         this.status(
@@ -282,7 +319,7 @@ export class App implements UiContext {
   }
 
   newProject(): void {
-    setStlPositions(null);
+    setStlRaw(null);
     clearAutosave();
     this.store.replace(initialState());
     this.insertPayload = null;
@@ -310,7 +347,7 @@ export class App implements UiContext {
     if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
     this.autosaveTimer = window.setTimeout(() => {
       this.autosaveTimer = null;
-      saveAutosave(this.store.state, getStlPositions());
+      saveAutosave(this.store.state, getStlRaw());
     }, AUTOSAVE_DEBOUNCE_MS);
   }
 
