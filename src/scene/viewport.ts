@@ -23,7 +23,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import type { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { GeometryPayload } from '../csg/protocol';
 import type { Solid } from '../model/geometry';
 
@@ -50,6 +50,12 @@ export interface GhostItem {
   selected: boolean;
   /** The cutter's entry point in world space — the anchor a drag actually moves. */
   entry: { x: number; y: number; z: number };
+}
+
+export interface GizmoTarget {
+  id: number;
+  entry: { x: number; y: number; z: number };
+  rot: { x: number; y: number; z: number };
 }
 
 interface CutterDrag {
@@ -127,6 +133,9 @@ export class Viewport {
    */
   private gizmoProxy = new Object3D();
   private gizmoId: number | null = null;
+  /** Last requested target, replayed once the control finishes loading. */
+  private gizmoTarget: GizmoTarget | null = null;
+  private gizmoLoading = false;
 
   onCutterRotateStart: ((id: number) => void) | null = null;
   onCutterRotate: ((id: number, rotX: number, rotY: number, rotZ: number) => void) | null = null;
@@ -169,7 +178,6 @@ export class Viewport {
     this.scene.add(this.gizmoProxy);
 
     this.bindControls();
-    this.initGizmo();
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
     this.updateCamera();
@@ -181,7 +189,17 @@ export class Viewport {
     loop();
   }
 
-  private initGizmo(): void {
+  /**
+   * TransformControls is loaded on demand: it is only needed once a cutter exists and
+   * the gizmo is shown, so it stays out of the initial download.
+   */
+  private async ensureGizmo(): Promise<void> {
+    if (this.gizmo || this.gizmoLoading) return;
+    this.gizmoLoading = true;
+    const { TransformControls } = await import(
+      'three/examples/jsm/controls/TransformControls.js'
+    );
+
     const g = new TransformControls(this.camera, this.renderer.domElement);
     g.setMode('rotate');
     // World space so the rings line up with the plate's X/Y/Z indicator and with the
@@ -218,6 +236,9 @@ export class Viewport {
 
     this.scene.add(g.getHelper());
     this.gizmo = g;
+    this.gizmoLoading = false;
+    // A target may have been requested while this was loading.
+    this.applyGizmoTarget();
   }
 
   gizmoAttached(): boolean {
@@ -234,17 +255,21 @@ export class Viewport {
   }
 
   /** Point the gizmo at a cutter, or pass null to hide it. */
-  setGizmo(
-    target: {
-      id: number;
-      entry: { x: number; y: number; z: number };
-      rot: { x: number; y: number; z: number };
-    } | null,
-  ): void {
+  setGizmo(target: GizmoTarget | null): void {
+    // Never re-seat the proxy mid-turn; that would fight the handle the user is holding.
+    if (this.gizmo?.dragging) return;
+    this.gizmoTarget = target;
+    if (!this.gizmo) {
+      if (target) void this.ensureGizmo();
+      return;
+    }
+    this.applyGizmoTarget();
+  }
+
+  private applyGizmoTarget(): void {
     const g = this.gizmo;
     if (!g) return;
-    // Never re-seat the proxy mid-turn; that would fight the handle the user is holding.
-    if (g.dragging) return;
+    const target = this.gizmoTarget;
 
     if (!target) {
       this.gizmoId = null;

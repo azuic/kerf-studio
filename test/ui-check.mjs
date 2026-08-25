@@ -539,7 +539,14 @@ ok(
       return [p.x, p.y, p.z];
     })()`);
 
-  ok('the gizmo is attached to the selected cutter', await evaluate('window.__kerf.debugGizmoVisible()'));
+  // TransformControls is a lazily-loaded chunk, so the gizmo appears a tick after the
+  // cutter is selected rather than synchronously with it.
+  let attached = false;
+  for (let i = 0; i < 40 && !attached; i++) {
+    attached = await evaluate('window.__kerf.debugGizmoVisible()');
+    if (!attached) await sleep(250);
+  }
+  ok('the gizmo is attached to the selected cutter', attached);
 
   // Grab a point on one of the rings. The gizmo reports which handle is under the
   // pointer, so hunt for a pixel where a ring actually is rather than guessing.

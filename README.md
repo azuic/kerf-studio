@@ -90,6 +90,27 @@ test/
   browser-run.mjs     drives worker-check.html in headless Chrome over CDP
 ```
 
+### Bundle
+
+The build splits into long-lived vendor chunks so editing app code doesn't invalidate
+the 500 kB of three:
+
+| chunk | raw | gzip | |
+|---|---|---|---|
+| `three` | 495 kB | 124 kB | eager |
+| `ui` (Ark/zag/floating-ui/tailwind) | 198 kB | 57 kB | eager |
+| `react` | 190 kB | 60 kB | eager |
+| `index` (app) | 68 kB | 21 kB | eager |
+| `TransformControls` | 22 kB | 5 kB | on first gizmo |
+| `worker` | 206 kB | | in parallel |
+
+`three/examples` is deliberately excluded from the `three` group: the rotation gizmo is
+imported dynamically, and folding it into the eager chunk would defeat that.
+
+Note that three is bundled twice — once for the page, once for the worker. Vite builds
+workers as a separate module graph, so chunks can't be shared between them. The worker's
+copy is tree-shaken to what the booleans actually use and downloads in parallel.
+
 Booleans run in a Web Worker, so a slow cut never freezes the viewport. Geometry is
 never serialised across the boundary — the worker receives parameter specs and rebuilds
 the solids with the same factories the main thread uses for the red cutter ghosts. The
