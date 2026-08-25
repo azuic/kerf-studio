@@ -106,6 +106,15 @@ for (let i = 0; i < 60; i++) {
   if (await evaluate("!!document.querySelector('#status')")) break;
 }
 
+// The Chrome profile is reused between runs, so a leftover autosave would restore
+// cutters from last time and make every ghost lookup ambiguous. Start clean.
+await evaluate('localStorage.clear()');
+await send('Page.navigate', { url: APP_URL }, sessionId);
+for (let i = 0; i < 60; i++) {
+  await sleep(500);
+  if (await evaluate("!!document.querySelector('#status')")) break;
+}
+
 /* ---------------- add a cutter ---------------- */
 const clickByText = async (text) =>
   evaluate(`(() => {
@@ -158,7 +167,7 @@ ok('and all three position axes', (await has('X')) && (await has('Y')) && (await
 // Measured from the rendered ghost's world matrix, not from the params it was built
 // from — that is the only way to catch a transform that skews on the way to the screen.
 const basis = await evaluate(`(() => {
-  const m = window.__kerf.debugGhostMatrices()[0];
+  const m = window.__kerf.debugSelectedGhost();
   if (!m) return null;
   const col = i => [m[i*4], m[i*4+1], m[i*4+2]].map(v => Math.round(v * 1e6) / 1e6);
   return { x: col(0), y: col(1), z: col(2) };
@@ -214,7 +223,7 @@ ok('rotation scrubs too', Math.abs(rotAfter - (rotBefore + 20)) < 1.1, `${rotBef
 // A rotation about X leaves the X axis alone, so the tilt shows up in the Y column:
 // 20° about X puts local Y at [0, cos20, sin20].
 const tiltedY = await evaluate(
-  '(() => { const m = window.__kerf.debugGhostMatrices()[0]; return [m[4],m[5],m[6]]; })()',
+  '(() => { const m = window.__kerf.debugSelectedGhost(); return [m[4],m[5],m[6]]; })()',
 );
 const rad = (20 * Math.PI) / 180;
 ok(
@@ -226,7 +235,7 @@ ok(
 await clickByText('Reset rotation');
 await sleep(500);
 const resetBasis = await evaluate(`(() => {
-  const m = window.__kerf.debugGhostMatrices()[0];
+  const m = window.__kerf.debugSelectedGhost();
   const col = i => [m[i*4], m[i*4+1], m[i*4+2]].map(v => Math.round(v * 1e6) / 1e6);
   return [col(0), col(1), col(2)];
 })()`);
@@ -488,14 +497,14 @@ ok(
     return { x: r.x + 40, y: r.y + 40 };
   })()`);
   const camBefore = await evaluate(
-    "JSON.stringify(window.__kerf.debugGhostMatrices()[0].slice(12,15))",
+    "JSON.stringify(window.__kerf.debugSelectedGhost().slice(12,15))",
   );
   await mouse('mousePressed', canvasBox.x, canvasBox.y, 1);
   await mouse('mouseMoved', canvasBox.x + 60, canvasBox.y, 1);
   await mouse('mouseReleased', canvasBox.x + 60, canvasBox.y, 0);
   await sleep(500);
   const camAfter = await evaluate(
-    "JSON.stringify(window.__kerf.debugGhostMatrices()[0].slice(12,15))",
+    "JSON.stringify(window.__kerf.debugSelectedGhost().slice(12,15))",
   );
   ok('dragging empty space orbits instead of moving a cutter', camBefore === camAfter);
 

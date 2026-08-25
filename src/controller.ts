@@ -77,9 +77,15 @@ export class KerfController {
     });
   }
 
-  /** Ghost world matrices — used by the browser tests to check cutter orientation. */
-  debugGhostMatrices(): number[][] {
+  /** Ghost world matrices, keyed by cutter id — used by the browser tests. */
+  debugGhostMatrices(): { id: number; matrix: number[] }[] {
     return this.viewport?.ghostMatrices() ?? [];
+  }
+
+  /** The world matrix of the currently selected cutter's ghost. */
+  debugSelectedGhost(): number[] | null {
+    const id = this.store.state.selected;
+    return this.debugGhostMatrices().find((g) => g.id === id)?.matrix ?? null;
   }
 
   /** Where a cutter's entry point lands on screen — used by the browser tests to aim. */

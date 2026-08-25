@@ -397,11 +397,14 @@ export class Viewport {
     this.scene.add(this.insertMesh);
   }
 
-  /** World matrices of the current cutter ghosts, for debugging and tests. */
-  ghostMatrices(): number[][] {
+  /**
+   * World matrices of the current cutter ghosts, keyed by cutter id. Ghost order tracks
+   * the enabled cutters, so callers must match on the id rather than an index.
+   */
+  ghostMatrices(): { id: number; matrix: number[] }[] {
     return this.ghosts.children.map((c) => {
       c.updateMatrixWorld(true);
-      return [...c.matrixWorld.elements];
+      return { id: c.userData.cutterId as number, matrix: [...c.matrixWorld.elements] };
     });
   }
 
