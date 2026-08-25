@@ -3,29 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Kerf Studio — hole &amp; joint cutter for FDM printing</title>
 </head>
-<body>
-<header>
-  <h1>Kerf<span>&nbsp;Studio</span></h1>
-  <div class="sub">holes · gaps · twist-locks · mating inserts — for FDM printing</div>
-  <div class="badge">units: mm · plate ref: 256×256 (Bambu P1S)</div>
-</header>
-
-<div id="app">
-  <div id="sidebar"></div>
-  <div id="viewport">
-    <div id="legend">
-      <span><i style="background:#9AA3AA"></i>body</span>
-      <span><i style="background:var(--cut)"></i>cutters</span>
-      <span><i style="background:var(--insert)"></i>insert</span>
-    </div>
-    <div id="busy">computing boolean…</div>
-    <div id="status"></div>
-    <div id="hud">drag&nbsp;rotate · wheel&nbsp;zoom · shift/right-drag&nbsp;pan</div>
-  </div>
-</div>
-
-<script type="module" src="/src/main.ts"></script>
+<!-- h-svh, not the base layer's min-h-svh: the sidebar's intrinsic height would
+     otherwise stretch the page past the viewport and take the canvas with it. -->
+<body class="h-svh overflow-hidden">
+<!-- The root must be a full-height flex column, or `main`'s flex-1 has no container to
+     resolve against and the row collapses to the sidebar's content height. -->
+<div id="root" class="flex h-full min-h-0 flex-col"></div>
+<script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

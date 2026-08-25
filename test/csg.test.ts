@@ -24,9 +24,11 @@ import {
   orientToYUp,
   parseSTL,
 } from '../src/io/stl';
-import { defaultParams } from '../src/model/geometry';
+import { BURIED_OVERSHOOT, cutterMatrix, defaultParams } from '../src/model/geometry';
+import { migrateState } from '../src/state/migrate';
 import type { BaseSpec, Cutter } from '../src/types';
 import { initialState } from '../src/types';
+import { Vector3 } from 'three';
 
 let failures = 0;
 let checks = 0;
@@ -115,7 +117,7 @@ console.log('\nsolid box minus a round hole');
 {
   const base = baseOf({ type: 'box', w: 80, d: 60, h: 40 });
   const c = cutter({ type: 'cyl' }, base);
-  c.params = { dia: 10, depth: 20, topOffset: 0, x: 0, z: 0, rotY: 0 };
+  c.params = { ...c.params, dia: 10, depth: 20 };
   const r = buildBody(base, [c], null);
   // 48-segment cylinder, so the removed prism is an n-gon not a circle.
   near('volume = box − hole', volume(r.position), 192_000 - ngonArea(5, 48) * 20, 0.05);
@@ -128,9 +130,10 @@ console.log('\nsurface cut overshoots the top face');
   // faces make the boolean ambiguous. Same cut started 5 mm down must not breach the top.
   const base = baseOf({ type: 'box', w: 40, d: 40, h: 20 });
   const surface = cutter({ type: 'cyl' }, base);
-  surface.params = { dia: 8, depth: 10, topOffset: 0, x: 0, z: 0, rotY: 0 };
+  surface.params = { ...surface.params, dia: 8, depth: 10 };
   const buried = cutter({ type: 'cyl', id: 2 }, base);
-  buried.params = { dia: 8, depth: 10, topOffset: 5, x: 0, z: 0, rotY: 0 };
+  // 5 mm below the top face, so it needs no surface overshoot.
+  buried.params = { ...buried.params, dia: 8, depth: 10, y: 20 - 5, overshoot: BURIED_OVERSHOOT };
 
   const a = buildBody(base, [surface], null);
   const b = buildBody(base, [buried], null);
@@ -155,7 +158,7 @@ console.log('\nwall gap punches both side walls but spares the floor');
   const base = baseOf({ type: 'hbox', w: 80, d: 60, h: 40, wall: 3, floor: 3 });
   const plain = buildBody(base, [], null);
   const gap = cutter({ type: 'gap' }, base);
-  gap.params = { w: 90, l: 3, depth: 24, topOffset: 0, x: 0, z: 0, rotY: 0 };
+  gap.params = { ...gap.params, w: 90, l: 3, depth: 24 };
   const r = buildBody(base, [gap], null);
   // Only the two 3 mm walls stand in the gap's path at that height; the floor is below it.
   near(
@@ -172,9 +175,9 @@ console.log('\ncutters compose: two holes remove both volumes');
 {
   const base = baseOf({ type: 'box', w: 60, d: 60, h: 30 });
   const one = cutter({ type: 'cyl', id: 1 }, base);
-  one.params = { dia: 8, depth: 10, topOffset: 0, x: -15, z: 0, rotY: 0 };
+  one.params = { ...one.params, dia: 8, depth: 10, x: -15 };
   const two = cutter({ type: 'cyl', id: 2 }, base);
-  two.params = { dia: 8, depth: 10, topOffset: 0, x: 15, z: 0, rotY: 0 };
+  two.params = { ...two.params, dia: 8, depth: 10, x: 15 };
   const r = buildBody(base, [one, two], null);
   near('volume = box − 2 holes', volume(r.position), 60 * 60 * 30 - 2 * ngonArea(4, 48) * 10, 0.05);
   closed('result', r.position);
@@ -187,14 +190,10 @@ console.log('\nbayonet set: shaft + lug entry + buried groove');
 {
   const base = baseOf({ type: 'box', w: 60, d: 60, h: 30 });
   const P = { dia: 12, lugW: 4, lugLen: 3.2, lugTh: 3, grooveH: 3.6, depth: 12, x: 0, z: 0 };
+  const surface = { x: 0, y: 30, z: 0, rotX: 0, rotY: 0, rotZ: 0, overshoot: 1 };
   const cutters: Cutter[] = [
     cutter(
-      {
-        type: 'cyl',
-        id: 1,
-        group: 'G1',
-        params: { dia: P.dia, depth: P.depth, x: 0, z: 0, rotY: 0, topOffset: 0 },
-      },
+      { type: 'cyl', id: 1, group: 'G1', params: { ...surface, dia: P.dia, depth: P.depth } },
       base,
     ),
     cutter(
@@ -202,15 +201,7 @@ console.log('\nbayonet set: shaft + lug entry + buried groove');
         type: 'box',
         id: 2,
         group: 'G1',
-        params: {
-          w: P.dia + 2 * P.lugLen,
-          l: P.lugW,
-          depth: P.depth,
-          x: 0,
-          z: 0,
-          rotY: 0,
-          topOffset: 0,
-        },
+        params: { ...surface, w: P.dia + 2 * P.lugLen, l: P.lugW, depth: P.depth },
       },
       base,
     ),
@@ -220,12 +211,11 @@ console.log('\nbayonet set: shaft + lug entry + buried groove');
         id: 3,
         group: 'G1',
         params: {
+          ...surface,
+          y: 30 - (P.depth - P.grooveH),
           dia: P.dia + 2 * P.lugLen,
           depth: P.grooveH,
-          x: 0,
-          z: 0,
-          rotY: 0,
-          topOffset: P.depth - P.grooveH,
+          overshoot: BURIED_OVERSHOOT,
         },
       },
       base,
@@ -264,7 +254,7 @@ console.log('\nplain insert fits its hole');
 {
   const base = baseOf({ type: 'box', w: 60, d: 60, h: 30 });
   const c = cutter({ type: 'cyl' }, base);
-  c.params = { dia: 10, depth: 15, topOffset: 0, x: 0, z: 0, rotY: 0 };
+  c.params = { ...c.params, dia: 10, depth: 15 };
   const clearance = 0.2;
   const ins = buildInsert({ kind: 'cutter', cutter: c }, clearance, false, 60);
   closed('insert', ins.position);
@@ -277,6 +267,135 @@ console.log('\nplain insert fits its hole');
 
   const bigger = buildInsert({ kind: 'cutter', cutter: c }, 0.05, false, 60);
   ok('tighter clearance means more material', volume(bigger.position) > volume(ins.position));
+}
+
+console.log('\ncutters aim in any direction');
+{
+  const base = baseOf({ type: 'box', w: 40, d: 40, h: 20 });
+
+  // A cutter is anchored at its entry point, so the transform must map the entry face
+  // centre — local (0, h/2 − overshoot, 0) — exactly onto (x, y, z) whatever the rotation.
+  const aimed = cutter({ type: 'cyl' }, base);
+  aimed.params = {
+    ...aimed.params,
+    dia: 8,
+    depth: 12,
+    x: -20,
+    y: 10,
+    z: 3,
+    rotX: 15,
+    rotY: 40,
+    rotZ: -90,
+  };
+  const h = aimed.params.depth + aimed.params.overshoot;
+  const entry = new Vector3(0, h / 2 - aimed.params.overshoot, 0).applyMatrix4(
+    cutterMatrix(aimed.params),
+  );
+  ok(
+    'rotation pivots about the entry point',
+    entry.distanceTo(new Vector3(-20, 10, 3)) < 1e-6,
+    `entry landed at ${entry.toArray().map((n) => n.toFixed(3)).join(', ')}`,
+  );
+
+  // Side entry: enter the −X face at mid height and drive through in +X. The cut runs
+  // along local −Y, so +90° about Z swings that onto +X.
+  const through = cutter({ type: 'cyl', id: 2 }, base);
+  through.params = {
+    ...through.params,
+    dia: 8,
+    depth: 50,
+    x: -20,
+    y: 10,
+    z: 0,
+    rotZ: 90,
+  };
+  const side = buildBody(base, [through], null);
+  near(
+    'side-entry hole removes a prism through the full width',
+    volume(side.position),
+    40 * 40 * 20 - ngonArea(4, 48) * 40,
+    0.05,
+  );
+  closed('side-entry result', side.position);
+
+  // Aiming a surface cutter straight back out of the material removes nothing. The
+  // overshoot is dropped here because flipping the cutter buries it in the material —
+  // which is correct, but it would leave a 1 mm dimple and muddy the assertion.
+  const outward = cutter({ type: 'cyl', id: 3 }, base);
+  outward.params = { ...outward.params, dia: 8, depth: 10, rotX: 180, overshoot: 0 };
+  const nothing = buildBody(base, [outward], null);
+  near('a cut aimed out of the model removes nothing', volume(nothing.position), 40 * 40 * 20, 0.01);
+
+  // ...and with the overshoot left on, exactly that sliver goes.
+  const dimple = cutter({ type: 'cyl', id: 6 }, base);
+  dimple.params = { ...dimple.params, dia: 8, depth: 10, rotX: 180 };
+  near(
+    'a flipped cutter buries only its overshoot',
+    volume(buildBody(base, [dimple], null).position),
+    40 * 40 * 20 - ngonArea(4, 48) * 1,
+    0.05,
+  );
+
+  // Tilting must not change how much is removed while the cut stays buried.
+  const straight = cutter({ type: 'cyl', id: 4 }, base);
+  straight.params = { ...straight.params, dia: 6, depth: 8 };
+  const tilted = cutter({ type: 'cyl', id: 5 }, base);
+  tilted.params = { ...tilted.params, dia: 6, depth: 8, rotZ: 20 };
+  const vs = volume(buildBody(base, [straight], null).position);
+  const vt = volume(buildBody(base, [tilted], null).position);
+  near('a 20° tilt removes the same volume', vt, vs, 0.5);
+}
+
+console.log('\nlegacy projects migrate to 3D cutters');
+{
+  const base = baseOf({ type: 'box', w: 80, d: 60, h: 40 });
+
+  // Exactly what an older .kerf.json holds: vertical only, anchored below the top.
+  const legacy = {
+    ...initialState(),
+    base,
+    cutters: [
+      {
+        id: 1,
+        type: 'cyl' as const,
+        name: 'old hole',
+        enabled: true,
+        group: null,
+        params: { dia: 10, depth: 20, topOffset: 0, x: 0, z: 0, rotY: 0 },
+      },
+      {
+        id: 2,
+        type: 'groove' as const,
+        name: 'old groove',
+        enabled: true,
+        group: null,
+        params: { dia: 16, depth: 4, topOffset: 12, x: 0, z: 0, rotY: 0 },
+      },
+    ],
+  };
+
+  const migrated = migrateState(legacy as never);
+  const p0 = migrated.cutters[0].params;
+  ok('surface cut anchors at the model top', p0.y === 40, `y = ${p0.y}`);
+  ok('surface cut keeps its overshoot', p0.overshoot === 1);
+  ok('topOffset is gone', !('topOffset' in p0));
+  ok('new rotation axes default to zero', p0.rotX === 0 && p0.rotZ === 0);
+
+  const p1 = migrated.cutters[1].params;
+  ok('buried cut anchors below the top', p1.y === 40 - 12, `y = ${p1.y}`);
+  ok('buried cut takes the small overshoot', p1.overshoot === BURIED_OVERSHOOT);
+
+  // The real assertion: migration must not move any material.
+  const modern = cutter({ type: 'cyl' }, base);
+  modern.params = { ...modern.params, dia: 10, depth: 20 };
+  near(
+    'migrated geometry matches an equivalent new cutter',
+    volume(buildBody(base, [migrated.cutters[0]], null).position),
+    volume(buildBody(base, [modern], null).position),
+    0.001,
+  );
+
+  ok('migrating twice is a no-op', migrateState(migrated).cutters[0].params.y === 40);
 }
 
 console.log('\nimported STL orientation');

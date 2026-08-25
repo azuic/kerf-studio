@@ -18,23 +18,36 @@ export type CutterType = 'cyl' | 'box' | 'hex' | 'gap' | 'groove';
  */
 export type UpAxis = 'z' | 'y';
 
+/**
+ * A cutter is anchored at its **entry point** — the centre of the face where the cut
+ * breaks the surface — and runs `depth` mm along its own −Y axis from there. Rotating
+ * it pivots about that entry point, so aiming a hole never moves where it enters.
+ *
+ * In local coordinates the entry face sits at y = 0, the body spans y ∈ [−depth, 0], and
+ * `overshoot` extends it to y = +overshoot so the boolean never has to resolve faces
+ * coplanar with the surface.
+ */
 export interface CutterParams {
   /** cyl + groove: hole diameter (mm) */
   dia?: number;
   /** hex: across-flats (mm) */
   af?: number;
-  /** box + gap: X width (mm) */
+  /** box + gap: width across the cutter's local X (mm) */
   w?: number;
-  /** box + gap: Z length (mm) */
+  /** box + gap: length along the cutter's local Z (mm) */
   l?: number;
-  /** How deep the cut goes, measured from its start (mm). */
+  /** How far the cut runs from its entry point, along the cutter's own axis (mm). */
   depth: number;
-  /** Start the cut this far *below* the model top. 0 = cut from the surface. */
-  topOffset: number;
+  /** Entry point in world space (mm). */
   x: number;
+  y: number;
   z: number;
-  /** Rotation about Y, degrees. */
+  /** Rotation about each world axis, degrees, applied in XYZ order. */
+  rotX: number;
   rotY: number;
+  rotZ: number;
+  /** How far to extend the cutter back past its entry face (mm). */
+  overshoot: number;
 }
 
 export interface Cutter {

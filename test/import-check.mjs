@@ -149,7 +149,7 @@ await evaluate(`(() => {
 let readout = '';
 for (let i = 0; i < 60; i++) {
   await sleep(500);
-  readout = await evaluate("document.querySelector('.readout')?.textContent ?? ''");
+  readout = await evaluate("document.querySelector('[data-testid=base-readout]')?.textContent ?? ''");
   if (readout.includes('height')) break;
 }
 
@@ -166,28 +166,39 @@ console.log(
 
 // The up-axis control is the escape hatch for files that really are Y-up. Flipping it
 // must re-seat the same mesh without a re-import, and flipping back must restore it.
-async function setUpAxis(value) {
+// Ark's Select is a listbox, not a native <select>, so drive it the way a person does:
+// click the trigger, then click the option whose text matches.
+async function setUpAxis(optionText) {
   await evaluate(`(() => {
-    const sel = [...document.querySelectorAll('select')].find(s =>
-      [...s.options].some(o => o.value === 'z') && [...s.options].some(o => o.value === 'y'));
-    sel.value = ${JSON.stringify(value)};
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const root = document.querySelector('[data-testid=up-axis]');
+    if (!root) throw new Error('up-axis select not rendered');
+    root.querySelector('[data-slot=select-trigger]').click();
+    return true;
+  })()`);
+  await sleep(300);
+  await evaluate(`(() => {
+    const item = [...document.querySelectorAll('[data-slot=select-item]')]
+      .find(el => el.textContent.trim().startsWith(${JSON.stringify(optionText)}));
+    if (!item) throw new Error('option not found: ' + ${JSON.stringify(optionText)});
+    item.click();
     return true;
   })()`);
   for (let i = 0; i < 40; i++) {
     await sleep(250);
-    const t = await evaluate("document.querySelector('.readout')?.textContent ?? ''");
+    const t = await evaluate(
+      "document.querySelector('[data-testid=base-readout]')?.textContent ?? ''",
+    );
     if (t.includes('height')) return t;
   }
   return '';
 }
 
-const asY = await setUpAxis('y');
+const asY = await setUpAxis('Y up');
 const yh = Number([...asY.matchAll(/([\d.]+)/g)].map((m) => Number(m[1]))[2]);
 const flipped = Math.abs(yh - 20) < 0.05;
 console.log(flipped ? 'ok   toggling to Y-up tips it (height 20)' : `FAIL Y-up gave height ${yh}`);
 
-const backToZ = await setUpAxis('z');
+const backToZ = await setUpAxis('Z up');
 const zh = Number([...backToZ.matchAll(/([\d.]+)/g)].map((m) => Number(m[1]))[2]);
 const restored = Math.abs(zh - 40) < 0.05;
 console.log(

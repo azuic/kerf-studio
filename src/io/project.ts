@@ -1,5 +1,5 @@
 import type { AppState } from '../types';
-import { initialState } from '../types';
+import { migrateState } from '../state/migrate';
 import { downloadBlob } from './stl';
 
 /**
@@ -64,15 +64,12 @@ export function deserializeProject(text: string): LoadedProject {
   }
   if (!raw.state || typeof raw.state !== 'object') throw new Error('project has no state');
 
-  // Merge over defaults so files written by an older build still load cleanly.
-  const base = initialState();
-  const state: AppState = {
-    ...base,
-    ...raw.state,
-    base: { ...base.base, ...raw.state.base },
-    insert: { ...base.insert, ...raw.state.insert },
+  // Merge over defaults and upgrade old cutter shapes so files written by an
+  // older build still load cleanly.
+  return {
+    state: migrateState(raw.state),
+    stl: raw.stl ? fromBase64(raw.stl) : null,
   };
-  return { state, stl: raw.stl ? fromBase64(raw.stl) : null };
 }
 
 export function downloadProject(state: AppState, stl: Float32Array | null, filename: string): void {

@@ -28,6 +28,12 @@ export class Store {
   private listeners = new Set<Listener>();
   private lastCoalesceKey: string | null = null;
   private lastCommitAt = 0;
+  /**
+   * Bumped on every emit. The state is mutated in place, so its identity never changes
+   * and React's useSyncExternalStore has nothing to compare — this counter is the
+   * snapshot it watches instead.
+   */
+  private rev = 0;
 
   constructor(initial: AppState = initialState()) {
     this.current = initial;
@@ -42,7 +48,13 @@ export class Store {
     return () => this.listeners.delete(fn);
   }
 
+  /** Monotonic revision, for change detection by identity-blind consumers. */
+  get version(): number {
+    return this.rev;
+  }
+
   private emit(): void {
+    this.rev++;
     for (const fn of this.listeners) fn(this.current);
   }
 

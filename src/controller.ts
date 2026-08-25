@@ -1,48 +1,61 @@
-import { CsgEngine, StaleRequestError } from '../csg/engine';
-import type { GeometryPayload, InsertRecipe } from '../csg/protocol';
+import { CsgEngine, StaleRequestError } from './csg/engine';
+import type { GeometryPayload, InsertRecipe } from './csg/protocol';
 import {
+  clearAutosave,
   deserializeProject,
   downloadProject,
-  clearAutosave,
   loadAutosave,
   saveAutosave,
-} from '../io/project';
-import { downloadSTL, parseSTL } from '../io/stl';
-import { cutterSolid } from '../model/geometry';
-import { getOrientedStl, getStlRaw, setStlRaw } from '../state/assets';
-import { Store } from '../state/store';
-import { Viewport } from '../scene/viewport';
-import type { AppState, UpAxis } from '../types';
-import { baseHeight, baseSpanX, baseSpanZ, initialState, insertPreviewX } from '../types';
-import { createBasePanel } from './basePanel';
-import { createCutterPanel } from './cutterPanel';
-import type { Panel, UiContext } from './context';
-import { createExportPanel, createProjectPanel } from './exportPanel';
-import { createInsertPanel } from './insertPanel';
+} from './io/project';
+import { downloadSTL, parseSTL } from './io/stl';
+import { cutterSolid } from './model/geometry';
+import { Viewport } from './scene/viewport';
+import { getOrientedStl, getStlRaw, setStlRaw } from './state/assets';
+import { Store } from './state/store';
+import type { AppState, UpAxis } from './types';
+import { baseHeight, baseSpanX, baseSpanZ, initialState, insertPreviewX } from './types';
 
 const RECOMPUTE_DEBOUNCE_MS = 160;
 const AUTOSAVE_DEBOUNCE_MS = 1200;
 const BIG_MESH_TRIS = 30_000;
 
-export class App implements UiContext {
+/**
+ * Everything that is not React: the worker, the viewport, and the actions the panels
+ * invoke. React subscribes to `store` for model changes and to `subscribeView` for the
+ * transient bits (status line, busy flag, whether an insert exists) that do not belong
+ * in undo history.
+ */
+export interface ViewState {
+  status: string;
+  tone: 'info' | 'error';
+  busy: boolean;
+  hasInsert: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export class KerfController {
   readonly store: Store;
   private engine = new CsgEngine();
-  private viewport: Viewport;
-  private panels: Panel[] = [];
+  private viewport: Viewport | null = null;
 
   private bodyPayload: GeometryPayload | null = null;
   private insertPayload: GeometryPayload | null = null;
 
   private recomputeTimer: number | null = null;
   private autosaveTimer: number | null = null;
-  private statusEl: HTMLElement;
-  private busyEl: HTMLElement;
 
-  constructor(sidebar: HTMLElement, viewportHost: HTMLElement, statusEl: HTMLElement, busyEl: HTMLElement) {
-    this.statusEl = statusEl;
-    this.busyEl = busyEl;
-    this.viewport = new Viewport(viewportHost);
+  private view: ViewState = {
+    status: '',
+    tone: 'info',
+    busy: false,
+    hasInsert: false,
+    canUndo: false,
+    canRedo: false,
+  };
+  private viewListeners = new Set<() => void>();
 
+  constructor() {
     const restored = loadAutosave();
     this.store = new Store(restored?.state ?? initialState());
     if (restored?.stl) setStlRaw(restored.stl);
@@ -51,47 +64,61 @@ export class App implements UiContext {
       this.status(`${tris.toLocaleString()} triangles · boolean ${ms} ms`);
     };
 
-    this.panels = [
-      createBasePanel(this),
-      createCutterPanel(this),
-      createInsertPanel(this),
-      createExportPanel(this),
-      createProjectPanel(this),
-    ];
-    for (const p of this.panels) sidebar.appendChild(p.el);
-
     this.store.subscribe(() => {
-      this.renderPanels();
+      this.refreshGhosts();
       this.scheduleAutosave();
+      this.patchView({ canUndo: this.store.canUndo, canRedo: this.store.canRedo });
     });
+  }
 
-    this.bindKeys();
-    this.renderPanels();
+  /** Called once the canvas element exists. */
+  attachViewport(host: HTMLElement): void {
+    if (this.viewport) return;
+    this.viewport = new Viewport(host);
+    this.refreshGhosts();
 
-    // A restored STL must reach the worker before the first boolean runs.
     const stl = getOrientedStl(this.store.state.base.stlUpAxis);
     const ready = stl ? this.engine.setStl(stl.positions) : Promise.resolve();
     void ready.then(() => this.computeNow());
   }
 
-  private renderPanels(): void {
-    const s = this.store.state;
-    for (const p of this.panels) p.update(s);
-    this.refreshGhosts(s);
+  /* ---------------- view state ---------------- */
+
+  subscribeView = (fn: () => void): (() => void) => {
+    this.viewListeners.add(fn);
+    return () => this.viewListeners.delete(fn);
+  };
+
+  getView = (): ViewState => this.view;
+
+  private patchView(patch: Partial<ViewState>): void {
+    const next = { ...this.view, ...patch };
+    const changed = (Object.keys(patch) as (keyof ViewState)[]).some(
+      (k) => this.view[k] !== next[k],
+    );
+    if (!changed) return;
+    this.view = next;
+    for (const fn of this.viewListeners) fn();
   }
 
-  private refreshGhosts(s: AppState): void {
-    this.viewport.setGhosts(
+  status(message: string, tone: 'info' | 'error' = 'info'): void {
+    this.patchView({ status: message, tone });
+  }
+
+  /* ---------------- geometry pipeline ---------------- */
+
+  private refreshGhosts(): void {
+    const s = this.store.state;
+    this.viewport?.setGhosts(
       s.cutters
         .filter((c) => c.enabled)
         .map((c) => ({ solid: cutterSolid(c, s.base), selected: c.id === s.selected })),
     );
   }
 
-  /* ---------------- UiContext ---------------- */
-
+  /** Refresh ghosts now; recompute the boolean shortly, if auto-preview is on. */
   requestBody(): void {
-    this.renderPanels();
+    this.refreshGhosts();
     if (!this.store.state.autoPreview) return;
     if (this.recomputeTimer !== null) clearTimeout(this.recomputeTimer);
     this.recomputeTimer = window.setTimeout(() => {
@@ -110,24 +137,23 @@ export class App implements UiContext {
 
   private async runBody(): Promise<GeometryPayload | null> {
     const s = this.store.state;
-    this.setBusy(true);
+    this.patchView({ busy: true });
     try {
       const payload = await this.engine.body(s.base, s.cutters);
       this.bodyPayload = payload;
-      this.viewport.setBody(payload);
+      this.viewport?.setBody(payload);
       return payload;
     } catch (err) {
       // A stale result is the normal outcome of typing quickly; only real errors surface.
       if (err instanceof StaleRequestError) return null;
-      this.status(
-        `Boolean failed: ${err instanceof Error ? err.message : String(err)}`,
-        'error',
-      );
+      this.status(`Boolean failed: ${message(err)}`, 'error');
       return null;
     } finally {
-      this.setBusy(this.engine.busy);
+      this.patchView({ busy: this.engine.busy });
     }
   }
+
+  /* ---------------- inserts ---------------- */
 
   async generateInsert(): Promise<void> {
     const s = this.store.state;
@@ -157,7 +183,7 @@ export class App implements UiContext {
       label = `${cutter.name} insert`;
     }
 
-    this.setBusy(true);
+    this.patchView({ busy: true });
     try {
       const payload = await this.engine.insert(
         recipe,
@@ -166,30 +192,31 @@ export class App implements UiContext {
         insertPreviewX(s.base),
       );
       this.insertPayload = payload;
-      this.viewport.setInsert(payload);
+      this.viewport?.setInsert(payload);
       this.store.update((st) => {
         st.insert.generated = true;
         st.insert.label = label;
       });
+      this.patchView({ hasInsert: true });
       this.status(`Insert ready — ${payload.triangles.toLocaleString()} triangles`);
     } catch (err) {
-      this.status(
-        `Insert failed: ${err instanceof Error ? err.message : String(err)}`,
-        'error',
-      );
+      this.status(`Insert failed: ${message(err)}`, 'error');
     } finally {
-      this.setBusy(this.engine.busy);
+      this.patchView({ busy: this.engine.busy });
     }
   }
 
   clearInsert(): void {
     this.insertPayload = null;
-    this.viewport.setInsert(null);
+    this.viewport?.setInsert(null);
     this.store.update((s) => {
       s.insert.generated = false;
       s.insert.label = '';
     });
+    this.patchView({ hasInsert: false });
   }
+
+  /* ---------------- import / orientation ---------------- */
 
   importStl(file: File): void {
     const reader = new FileReader();
@@ -203,24 +230,20 @@ export class App implements UiContext {
           s.base.type = 'stl';
           s.base.stlName = file.name;
           s.base.stlTris = parsed.triangles;
-          // STL carries no orientation metadata; Z-up is the convention every CAD tool
-          // and slicer writes, so a fresh import always starts there.
+          // STL carries no orientation metadata; Z-up is what CAD tools and slicers
+          // write, so a fresh import always starts there.
           s.base.stlUpAxis = 'z';
           if (parsed.triangles > BIG_MESH_TRIS) s.autoPreview = false;
         });
         this.applyStlOrientation();
 
-        if (parsed.triangles > BIG_MESH_TRIS) {
-          this.status(
-            `${parsed.triangles.toLocaleString()} triangles — live preview switched off. ` +
-              `Use “Apply cuts now”.`,
-          );
-        }
-      } catch (err) {
         this.status(
-          `Could not read this STL: ${err instanceof Error ? err.message : String(err)}`,
-          'error',
+          parsed.triangles > BIG_MESH_TRIS
+            ? `${parsed.triangles.toLocaleString()} triangles — live preview switched off. Use “Apply cuts now”.`
+            : `Imported ${file.name}`,
         );
+      } catch (err) {
+        this.status(`Could not read this STL: ${message(err)}`, 'error');
       }
     };
     reader.readAsArrayBuffer(file);
@@ -238,8 +261,8 @@ export class App implements UiContext {
    * Re-derive the seated mesh for the current up axis, refresh the recorded dimensions,
    * reframe the camera and hand the new buffer to the worker.
    *
-   * Cutter depths are measured down from the model top, so the dimensions have to be
-   * updated before the next boolean runs or every cut lands at the wrong height.
+   * The dimensions have to be updated before the next boolean runs, or anything anchored
+   * to the model top lands at the wrong height.
    */
   private applyStlOrientation(): void {
     const oriented = getOrientedStl(this.store.state.base.stlUpAxis);
@@ -256,9 +279,11 @@ export class App implements UiContext {
     );
 
     const b = this.store.state.base;
-    this.viewport.frame(baseSpanX(b), baseSpanZ(b), baseHeight(b));
+    this.viewport?.frame(baseSpanX(b), baseSpanZ(b), baseHeight(b));
     void this.engine.setStl(oriented.positions).then(() => this.computeNow());
   }
+
+  /* ---------------- export ---------------- */
 
   exportBody(): void {
     const download = (p: GeometryPayload | null): void => {
@@ -279,8 +304,12 @@ export class App implements UiContext {
       return;
     }
     downloadSTL(this.insertPayload.position, 'kerf-insert.stl');
-    this.status(`Exported kerf-insert.stl · ${this.insertPayload.triangles.toLocaleString()} triangles`);
+    this.status(
+      `Exported kerf-insert.stl · ${this.insertPayload.triangles.toLocaleString()} triangles`,
+    );
   }
+
+  /* ---------------- projects ---------------- */
 
   saveProject(): void {
     // The raw file goes in, not the seated copy — the up axis is recorded in the state,
@@ -298,21 +327,22 @@ export class App implements UiContext {
         setStlRaw(stl);
         this.store.replace(state);
         this.insertPayload = null;
-        this.viewport.setInsert(null);
+        this.viewport?.setInsert(null);
+        this.patchView({ hasInsert: false });
 
-        const oriented = stl ? getOrientedStl(state.base.stlUpAxis) : null;
-        if (oriented) {
+        if (stl) {
           this.applyStlOrientation();
         } else {
-          this.viewport.frame(baseSpanX(state.base), baseSpanZ(state.base), baseHeight(state.base));
+          this.viewport?.frame(
+            baseSpanX(state.base),
+            baseSpanZ(state.base),
+            baseHeight(state.base),
+          );
           void this.engine.clearStl().then(() => this.computeNow());
         }
         this.status(`Loaded ${file.name}`);
       } catch (err) {
-        this.status(
-          `Could not open this project: ${err instanceof Error ? err.message : String(err)}`,
-          'error',
-        );
+        this.status(`Could not open this project: ${message(err)}`, 'error');
       }
     };
     reader.readAsText(file);
@@ -323,25 +353,21 @@ export class App implements UiContext {
     clearAutosave();
     this.store.replace(initialState());
     this.insertPayload = null;
-    this.viewport.setInsert(null);
+    this.viewport?.setInsert(null);
+    this.patchView({ hasInsert: false });
     void this.engine.clearStl().then(() => this.computeNow());
     this.status('New project');
   }
 
-  hasInsert(): boolean {
-    return this.insertPayload !== null;
+  undo(): void {
+    if (this.store.undo()) this.requestBody();
   }
 
-  status(message: string, tone: 'info' | 'error' = 'info'): void {
-    this.statusEl.textContent = message;
-    this.statusEl.classList.toggle('error', tone === 'error');
+  redo(): void {
+    if (this.store.redo()) this.requestBody();
   }
 
   /* ---------------- plumbing ---------------- */
-
-  private setBusy(on: boolean): void {
-    this.busyEl.style.display = on ? 'block' : 'none';
-  }
 
   private scheduleAutosave(): void {
     if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
@@ -351,13 +377,13 @@ export class App implements UiContext {
     }, AUTOSAVE_DEBOUNCE_MS);
   }
 
-  private bindKeys(): void {
-    window.addEventListener('keydown', (e) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.key.toLowerCase() !== 'z') return;
-      e.preventDefault();
-      const moved = e.shiftKey ? this.store.redo() : this.store.undo();
-      if (moved) this.requestBody();
-    });
+  /** Mutate the model and schedule a recompute — the path almost every control takes. */
+  edit(mutate: (s: AppState) => void, coalesce?: string): void {
+    this.store.update(mutate, coalesce ? { coalesce } : {});
+    this.requestBody();
   }
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

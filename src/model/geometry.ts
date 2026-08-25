@@ -2,10 +2,11 @@ import {
   BoxGeometry,
   BufferGeometry,
   CylinderGeometry,
+  Euler,
   Float32BufferAttribute,
   Matrix4,
 } from 'three';
-import type { BaseSpec, Cutter } from '../types';
+import type { BaseSpec, Cutter, CutterParams } from '../types';
 import { baseHeight, baseSpanX } from '../types';
 
 /**
@@ -103,18 +104,32 @@ export function baseSolids(
   }
 }
 
+const DEG = Math.PI / 180;
+
 /**
- * A cutter solid, positioned.
+ * The transform that places a cutter: translate to the entry point, apply the rotation,
+ * then shift along the local axis so the entry face lands on that point.
  *
- * Cuts always run downward (−Y). The solid's top sits at `baseHeight − topOffset`
- * and its bottom at that minus `depth`. When the cut starts at the surface the solid
- * is extended 1 mm *above* it, so the boolean never sees coplanar top faces.
+ * Rotating therefore pivots about the entry point rather than the solid's centre, which
+ * is what makes "aim the hole" behave the way you expect — the hole stays where it
+ * breaks the surface while its far end swings.
  */
-export function cutterSolid(c: Cutter, b: BaseSpec): Solid {
+export function cutterMatrix(p: CutterParams): Matrix4 {
+  // The solid is built centred on its own origin, so shift it back by half its length
+  // to put the entry face — not the centre — on the anchor point.
+  const centreAlongAxis = (p.overshoot - p.depth) / 2;
+  const rotation = new Matrix4().makeRotationFromEuler(
+    new Euler(p.rotX * DEG, p.rotY * DEG, p.rotZ * DEG, 'XYZ'),
+  );
+  return translation(p.x, p.y, p.z)
+    .multiply(rotation)
+    .multiply(translation(0, centreAlongAxis, 0));
+}
+
+/** A cutter solid, positioned. */
+export function cutterSolid(c: Cutter, _b: BaseSpec): Solid {
   const p = c.params;
-  const top = baseHeight(b) - (p.topOffset || 0);
-  const overshoot = (p.topOffset || 0) <= 0.001 ? 1.0 : 0.001;
-  const h = p.depth + overshoot;
+  const h = p.depth + p.overshoot;
 
   let geom: BufferGeometry;
   if (c.type === 'cyl' || c.type === 'groove') {
@@ -127,11 +142,7 @@ export function cutterSolid(c: Cutter, b: BaseSpec): Solid {
     geom = new BoxGeometry(Math.max(0.05, p.w ?? 10), h, Math.max(0.05, p.l ?? 10));
   }
 
-  const cy = top - p.depth + h / 2;
-  const matrix = translation(p.x || 0, cy, p.z || 0).multiply(
-    new Matrix4().makeRotationY(((p.rotY || 0) * Math.PI) / 180),
-  );
-  return solid(geom, matrix);
+  return solid(geom, cutterMatrix(p));
 }
 
 /* ------------------------------------------------------------------ *
@@ -224,29 +235,28 @@ export function cutterInsertSolids(
   return out;
 }
 
+/** Surface overshoot for a cut that starts on the model's face. */
+export const SURFACE_OVERSHOOT = 1;
+
+/** A cut that starts buried inside material needs no real overshoot. */
+export const BURIED_OVERSHOOT = 0.001;
+
 /** Default parameters for a freshly added cutter, scaled to the current model. */
 export function defaultParams(type: Cutter['type'], b: BaseSpec): Cutter['params'] {
   const h = baseHeight(b) || 20;
-  const depth = Math.max(4, h * 0.5);
+  // New cutters enter through the top face, pointing straight down.
+  const common = { x: 0, y: h, z: 0, rotX: 0, rotY: 0, rotZ: 0, overshoot: SURFACE_OVERSHOOT };
   switch (type) {
     case 'cyl':
-      return { dia: 10, depth, topOffset: 0, x: 0, z: 0, rotY: 0 };
+      return { ...common, dia: 10, depth: Math.max(4, h * 0.5) };
     case 'hex':
-      return { af: 10, depth, topOffset: 0, x: 0, z: 0, rotY: 0 };
+      return { ...common, af: 10, depth: Math.max(4, h * 0.5) };
     case 'box':
-      return { w: 12, l: 8, depth, topOffset: 0, x: 0, z: 0, rotY: 0 };
+      return { ...common, w: 12, l: 8, depth: Math.max(4, h * 0.5) };
     case 'gap':
-      return {
-        w: baseSpanX(b) + 10,
-        l: 3,
-        depth: Math.max(4, h * 0.6),
-        topOffset: 0,
-        x: 0,
-        z: 0,
-        rotY: 0,
-      };
+      return { ...common, w: baseSpanX(b) + 10, l: 3, depth: Math.max(4, h * 0.6) };
     case 'groove':
-      return { dia: 16, depth: 3.6, topOffset: 0, x: 0, z: 0, rotY: 0 };
+      return { ...common, dia: 16, depth: 3.6, overshoot: BURIED_OVERSHOOT };
   }
 }
 
