@@ -334,6 +334,58 @@ const overlayGone = await evaluate(
 );
 ok('the drop target clears after dropping', overlayGone);
 
+/* ---------------- base model reset / delete ---------------- */
+const readBase = async () =>
+  evaluate("document.querySelector('[data-testid=base-readout]')?.textContent ?? ''");
+const barOpen = async () => evaluate("!!document.querySelector('[data-testid=base-action-bar]')");
+
+ok('importing opens the base action bar', await barOpen());
+
+// Reset on an imported mesh re-seats it rather than unloading it.
+await evaluate(`(() => {
+  const bar = document.querySelector('[data-testid=base-action-bar]');
+  [...bar.querySelectorAll('button')].find(b => b.textContent.trim() === 'Reset').click();
+  return true;
+})()`);
+await sleep(1200);
+ok(
+  'Reset keeps the imported mesh',
+  (await readBase()).includes('12.0') && (await readBase()).includes('36.0'),
+  (await readBase()).trim(),
+);
+
+// Delete drops back to the default hollow box.
+await evaluate(`(() => {
+  const bar = document.querySelector('[data-testid=base-action-bar]');
+  [...bar.querySelectorAll('button')].find(b => b.textContent.trim() === 'Delete').click();
+  return true;
+})()`);
+await sleep(1500);
+const afterDelete = await readBase();
+ok(
+  'Delete returns the base to the default box',
+  afterDelete.includes('80.0') && afterDelete.includes('60.0') && afterDelete.includes('40.0'),
+  afterDelete.trim(),
+);
+ok('and closes the action bar', !(await barOpen()));
+
+// The raw mesh is deliberately kept in memory so this undo can restore it. If it were
+// dropped, the state would come back pointing at a mesh that no longer exists.
+await evaluate("window.__kerf.undo()");
+await sleep(1800);
+const afterUndo = await readBase();
+ok(
+  'undo brings the imported mesh back',
+  afterUndo.includes('12.0') && afterUndo.includes('36.0'),
+  afterUndo.trim(),
+);
+const bodyTris = await evaluate("document.querySelector('#status')?.textContent ?? ''");
+ok(
+  'and the worker recomputes from that mesh, not a stale one',
+  /triangles/.test(bodyTris),
+  bodyTris.trim(),
+);
+
 for (const e of pageErrors) console.log('PAGE ERROR:', e);
 ok('no uncaught page errors', pageErrors.length === 0);
 

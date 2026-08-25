@@ -10,7 +10,7 @@ import {
 import { downloadSTL, parseSTL } from './io/stl';
 import { cutterSolid } from './model/geometry';
 import { Viewport } from './scene/viewport';
-import { getOrientedStl, getStlRaw, setStlRaw } from './state/assets';
+import { getOrientedStl, getStlRaw, hasStl, setStlRaw } from './state/assets';
 import { Store } from './state/store';
 import type { AppState, UpAxis } from './types';
 import { baseHeight, baseSpanX, baseSpanZ, initialState, insertPreviewX } from './types';
@@ -44,6 +44,12 @@ export class KerfController {
 
   private recomputeTimer: number | null = null;
   private autosaveTimer: number | null = null;
+  /**
+   * What the worker was last told about the imported mesh. The worker caches it, so
+   * every boolean reconciles against this rather than re-sending — and undo, which only
+   * restores the store, cannot leave the worker holding the wrong mesh.
+   */
+  private sentStlKey: string | null = null;
 
   private view: ViewState = {
     status: '',
@@ -82,9 +88,8 @@ export class KerfController {
     this.viewport = new Viewport(host);
     this.refreshGhosts();
 
-    const stl = getOrientedStl(this.store.state.base.stlUpAxis);
-    const ready = stl ? this.engine.setStl(stl.positions) : Promise.resolve();
-    void ready.then(() => this.computeNow());
+    this.frameBase();
+    this.computeNow();
   }
 
   /* ---------------- view state ---------------- */
@@ -140,10 +145,30 @@ export class KerfController {
     void this.runBody();
   }
 
+  /**
+   * Make the worker's cached mesh match what the state now asks for. Cheap when nothing
+   * changed, and it is what makes undo/redo across an import or a delete correct.
+   */
+  private async ensureWorkerStl(): Promise<void> {
+    const b = this.store.state.base;
+    const needsMesh = b.type === 'stl' && hasStl();
+    const key = needsMesh ? `mesh:${b.stlUpAxis}` : 'none';
+    if (key === this.sentStlKey) return;
+
+    if (needsMesh) {
+      const oriented = getOrientedStl(b.stlUpAxis);
+      if (oriented) await this.engine.setStl(oriented.positions);
+    } else {
+      await this.engine.clearStl();
+    }
+    this.sentStlKey = key;
+  }
+
   private async runBody(): Promise<GeometryPayload | null> {
-    const s = this.store.state;
     this.patchView({ busy: true });
     try {
+      await this.ensureWorkerStl();
+      const s = this.store.state;
       const payload = await this.engine.body(s.base, s.cutters);
       this.bodyPayload = payload;
       this.viewport?.setBody(payload);
@@ -231,6 +256,7 @@ export class KerfController {
         const parsed = parseSTL(reader.result as ArrayBuffer);
         setStlRaw(parsed.positions);
 
+        this.sentStlKey = null;
         this.store.update((s) => {
           s.base.type = 'stl';
           s.base.stlName = file.name;
@@ -283,9 +309,56 @@ export class KerfController {
       { transient: true },
     );
 
+    this.sentStlKey = null;
+    this.frameBase();
+    this.computeNow();
+  }
+
+  private frameBase(): void {
     const b = this.store.state.base;
     this.viewport?.frame(baseSpanX(b), baseSpanZ(b), baseHeight(b));
-    void this.engine.setStl(oriented.positions).then(() => this.computeNow());
+  }
+
+  /* ---------------- base model ---------------- */
+
+  /**
+   * Restore the base to its default proportions, keeping the type and any loaded mesh.
+   * For an STL that means putting the up axis back to Z and re-seating it on the plate.
+   */
+  resetBase(): void {
+    const defaults = initialState().base;
+    const wasStl = this.store.state.base.type === 'stl';
+
+    this.store.update((s) => {
+      const { type, stlName, stlTris } = s.base;
+      s.base = { ...defaults, type, stlName, stlTris };
+    });
+
+    if (wasStl) {
+      this.applyStlOrientation();
+    } else {
+      this.sentStlKey = null;
+      this.frameBase();
+      this.requestBody();
+    }
+    this.status('Base model reset');
+  }
+
+  /**
+   * Drop the base back to the default box, unloading any imported mesh.
+   *
+   * The raw STL buffer is deliberately kept in assets: it lives outside undo history, so
+   * discarding it here would make an undo restore a base that points at a mesh no longer
+   * in memory. It is released by New, or replaced by the next import.
+   */
+  deleteBase(): void {
+    this.store.update((s) => {
+      s.base = initialState().base;
+    });
+    this.sentStlKey = null;
+    this.frameBase();
+    this.requestBody();
+    this.status('Base model removed');
   }
 
   /* ---------------- export ---------------- */
@@ -335,15 +408,12 @@ export class KerfController {
         this.viewport?.setInsert(null);
         this.patchView({ hasInsert: false });
 
+        this.sentStlKey = null;
         if (stl) {
           this.applyStlOrientation();
         } else {
-          this.viewport?.frame(
-            baseSpanX(state.base),
-            baseSpanZ(state.base),
-            baseHeight(state.base),
-          );
-          void this.engine.clearStl().then(() => this.computeNow());
+          this.frameBase();
+          this.computeNow();
         }
         this.status(`Loaded ${file.name}`);
       } catch (err) {
@@ -360,7 +430,9 @@ export class KerfController {
     this.insertPayload = null;
     this.viewport?.setInsert(null);
     this.patchView({ hasInsert: false });
-    void this.engine.clearStl().then(() => this.computeNow());
+    this.sentStlKey = null;
+    this.frameBase();
+    this.computeNow();
     this.status('New project');
   }
 

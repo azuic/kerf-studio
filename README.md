@@ -27,6 +27,9 @@ node test/browser-run.mjs    # worker plumbing
   **Up axis** control re-seats the mesh without a re-import for the rarer Y-up files.
   Imported meshes are checked for open and non-manifold edges on load, because a boolean
   against a mesh that is not watertight produces wrong results in any CSG engine.
+  A floating action bar offers **Reset** (default proportions, and for an STL the Z-up
+  reading and a re-seat on the plate) and **Delete** (back to the default box, unloading
+  the mesh). Both keep your cutters, and both are undoable.
 - **Cutters** — round, rectangular and hex holes, wall gaps, and lock grooves. Each is
   anchored at its **entry point** — where the cut breaks the surface — and runs `depth`
   mm from there along its own axis, with free rotation about all three axes and a free

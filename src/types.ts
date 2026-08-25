@@ -159,6 +159,36 @@ export function baseSpanZ(b: BaseSpec): number {
   return b.d;
 }
 
+/**
+ * True when the base is untouched — the default type at its default proportions and no
+ * imported mesh. Drives whether there is anything for Reset to undo.
+ */
+export function isBaseDefault(b: BaseSpec): boolean {
+  const d = initialState().base;
+  if (b.type === 'stl' || b.stlName) return false;
+  return (
+    b.type === d.type &&
+    b.w === d.w &&
+    b.d === d.d &&
+    b.h === d.h &&
+    b.r === d.r &&
+    b.wall === d.wall &&
+    b.floor === d.floor
+  );
+}
+
+/** Short human label for the current base, for the action bar's badge. */
+export function describeBase(b: BaseSpec): string {
+  if (b.type === 'stl') return b.stlName || 'Imported STL';
+  return {
+    box: 'Solid box',
+    hbox: 'Hollow box',
+    cyl: 'Solid cylinder',
+    cup: 'Cup',
+    stl: 'Imported STL',
+  }[b.type];
+}
+
 /** Where the generated insert is parked in the viewport, clear of the body. */
 export function insertPreviewX(b: BaseSpec): number {
   return baseSpanX(b) / 2 + 30;

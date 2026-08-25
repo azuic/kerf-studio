@@ -1,12 +1,22 @@
-import { useMemo, useRef } from 'react';
+import { RotateCcwIcon, Trash2Icon, XIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Hint, LabeledSelect, Row, Section, type Option } from '@/components/Field';
 import { ScrubInput } from '@/components/ScrubInput';
+import {
+  ActionBar,
+  ActionBarBody,
+  ActionBarClose,
+  ActionBarContent,
+  ActionBarSeparator,
+  ActionBarTrigger,
+  ActionBarValue,
+} from '@/components/ui/action-bar';
 import { Button } from '@/components/ui/button';
 import { useAppState, useKerf } from '@/kerf-context';
 import { checkMesh } from '@/io/stl';
 import { getStlRaw } from '@/state/assets';
 import type { BaseType, UpAxis } from '@/types';
-import { baseHeight, baseSpanX, baseSpanZ } from '@/types';
+import { baseHeight, baseSpanX, baseSpanZ, describeBase, isBaseDefault } from '@/types';
 
 const BASE_TYPES: readonly Option<BaseType>[] = [
   { value: 'box', label: 'Solid box' },
@@ -109,10 +119,11 @@ export function BasePanel() {
         </Row>
       )}
 
-      <div className="mt-1.5 flex gap-2">
+      <div className="mt-1.5 flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
           Import STL…
         </Button>
+        <BaseActionBar />
         <input
           ref={fileRef}
           type="file"
@@ -148,5 +159,71 @@ export function BasePanel() {
         </p>
       )}
     </Section>
+  );
+}
+
+/**
+ * Reset / delete for the base model, in a floating action bar.
+ *
+ * It opens itself when the base changes *structurally* — a type switch or a new import —
+ * rather than on every dimension tweak, which would make it flicker during a scrub. Once
+ * dismissed it stays dismissed until the next structural change, and the panel button
+ * brings it back on demand.
+ */
+function BaseActionBar() {
+  const kerf = useKerf();
+  const b = useAppState().base;
+  const [open, setOpen] = useState(false);
+
+  const atDefaults = isBaseDefault(b);
+  const structure = `${b.type}:${b.stlName}`;
+  const lastStructure = useRef(structure);
+
+  useEffect(() => {
+    if (lastStructure.current === structure) return;
+    lastStructure.current = structure;
+    setOpen(!isBaseDefault(b));
+  }, [structure, b]);
+
+  return (
+    <ActionBar
+      open={open}
+      onOpenChange={setOpen}
+      positioning={{ placement: 'bottom', gutter: '52px' }}
+    >
+      <ActionBarTrigger asChild>
+        <Button variant="outline" size="sm" disabled={atDefaults}>
+          Base actions
+        </Button>
+      </ActionBarTrigger>
+
+      <ActionBarContent aria-label="Base model actions" data-testid="base-action-bar">
+        <ActionBarValue count={1} label={describeBase(b)} />
+        <ActionBarSeparator />
+        <ActionBarBody>
+          <Button variant="ghost" size="sm" disabled={atDefaults} onClick={() => kerf.resetBase()}>
+            <RotateCcwIcon />
+            Reset
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive-foreground hover:text-destructive-foreground"
+            disabled={atDefaults}
+            onClick={() => {
+              kerf.deleteBase();
+              setOpen(false);
+            }}
+          >
+            <Trash2Icon />
+            Delete
+          </Button>
+        </ActionBarBody>
+        <ActionBarSeparator />
+        <ActionBarClose>
+          <XIcon className="size-4" />
+        </ActionBarClose>
+      </ActionBarContent>
+    </ActionBar>
   );
 }
