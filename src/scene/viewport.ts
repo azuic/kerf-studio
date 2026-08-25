@@ -13,8 +13,11 @@ import {
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
+  Plane,
   PlaneGeometry,
+  Raycaster,
   Scene,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
@@ -26,6 +29,27 @@ const PLATE = 256;
 
 /** Long enough to read at a glance, short enough not to crowd a small part. */
 const AXIS_LENGTH = 40;
+
+/** Hold to snap a viewport drag to whole millimetres. */
+const SNAP_MM = 1;
+
+export interface GhostItem {
+  id: number;
+  solid: Solid;
+  selected: boolean;
+  /** The cutter's entry point in world space — the anchor a drag actually moves. */
+  entry: { x: number; y: number; z: number };
+}
+
+interface CutterDrag {
+  id: number;
+  /** 'ground' slides across XZ; 'vertical' raises and lowers along Y. */
+  mode: 'ground' | 'vertical';
+  plane: Plane;
+  /** Entry point minus the first hit, so the cutter does not jump to the cursor. */
+  offset: Vector3;
+  moved: boolean;
+}
 
 export class Viewport {
   readonly scene = new Scene();
@@ -69,6 +93,19 @@ export class Viewport {
   private phi = 1.05;
   private dist = 220;
   private target = new Vector3(0, 20, 0);
+
+  /* picking and dragging cutters */
+  private raycaster = new Raycaster();
+  private ndc = new Vector2();
+  private drag: CutterDrag | null = null;
+
+  /** Fired when a cutter ghost is clicked. */
+  onCutterPick: ((id: number) => void) | null = null;
+  /** Fired once when a drag begins, so the caller can open a single undo step. */
+  onCutterDragStart: ((id: number) => void) | null = null;
+  /** Fired continuously with the cutter's new entry point. */
+  onCutterDragMove: ((id: number, x: number, y: number, z: number) => void) | null = null;
+  onCutterDragEnd: (() => void) | null = null;
 
   constructor(host: HTMLElement) {
     this.host = host;
@@ -116,6 +153,95 @@ export class Viewport {
     loop();
   }
 
+  /** Pointer position in normalised device coordinates for the current canvas size. */
+  private setNdc(e: { clientX: number; clientY: number }): void {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    this.ndc.set(
+      ((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+  }
+
+  private pickCutter(e: { clientX: number; clientY: number }): Mesh | null {
+    this.setNdc(e);
+    const hits = this.raycaster.intersectObjects(this.ghosts.children, false);
+    return hits.length ? (hits[0].object as Mesh) : null;
+  }
+
+  /**
+   * Start dragging the cutter under the pointer.
+   *
+   * Ground drags run on a horizontal plane through the cutter's current entry point, so
+   * it slides across the bed at a constant height. Vertical drags use a plane that faces
+   * the camera, which keeps the cutter tracking the cursor from any orbit angle.
+   */
+  private beginCutterDrag(mesh: Mesh, e: PointerEvent): void {
+    const id = mesh.userData.cutterId as number;
+    const entry = (mesh.userData.entry as Vector3).clone();
+
+    const mode: CutterDrag['mode'] = e.altKey ? 'vertical' : 'ground';
+    const plane =
+      mode === 'ground'
+        ? new Plane(new Vector3(0, 1, 0), -entry.y)
+        : (() => {
+            const facing = new Vector3()
+              .subVectors(this.camera.position, entry)
+              .setY(0)
+              .normalize();
+            return new Plane(facing, -facing.dot(entry));
+          })();
+
+    this.setNdc(e);
+    const hit = new Vector3();
+    if (!this.raycaster.ray.intersectPlane(plane, hit)) return;
+
+    this.drag = { id, mode, plane, offset: entry.clone().sub(hit), moved: false };
+    this.onCutterPick?.(id);
+  }
+
+  private updateCutterDrag(e: PointerEvent): void {
+    const d = this.drag;
+    if (!d) return;
+    this.setNdc(e);
+    const hit = new Vector3();
+    if (!this.raycaster.ray.intersectPlane(d.plane, hit)) return;
+
+    const next = hit.add(d.offset);
+    const snap = (v: number) =>
+      e.metaKey || e.ctrlKey ? Math.round(v / SNAP_MM) * SNAP_MM : Math.round(v * 1e3) / 1e3;
+
+    // The plane fixes the axes this drag must not change; take those straight from the
+    // cutter's current entry point rather than trusting the intersection to be exact.
+    const current = this.entryOf(d.id);
+    if (!current) return;
+
+    // Open the undo step *before* the first move lands, or the snapshot captures a
+    // position the cutter has already been dragged to.
+    if (!d.moved) {
+      d.moved = true;
+      this.onCutterDragStart?.(d.id);
+    }
+
+    if (d.mode === 'ground') {
+      this.onCutterDragMove?.(d.id, snap(next.x), current.y, snap(next.z));
+    } else {
+      this.onCutterDragMove?.(d.id, current.x, snap(next.y), current.z);
+    }
+  }
+
+  /** Client-space position of a cutter's entry point. Used by the browser tests. */
+  projectEntry(id: number): { x: number; y: number } | null {
+    const entry = this.entryOf(id);
+    if (!entry) return null;
+    const v = entry.clone().project(this.camera);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return {
+      x: r.left + ((v.x + 1) / 2) * r.width,
+      y: r.top + ((1 - v.y) / 2) * r.height,
+    };
+  }
+
   private bindControls(): void {
     const el = this.renderer.domElement;
     let dragging = false;
@@ -124,14 +250,31 @@ export class Viewport {
     let ly = 0;
 
     el.addEventListener('pointerdown', (e) => {
+      el.setPointerCapture(e.pointerId);
+
+      // A plain left press on a cutter grabs it; anything else falls through to orbit.
+      if (e.button === 0 && !e.shiftKey) {
+        const hit = this.pickCutter(e);
+        if (hit) {
+          this.beginCutterDrag(hit, e);
+          return;
+        }
+      }
+
       dragging = true;
       panning = e.button === 2 || e.button === 1 || e.shiftKey;
       lx = e.clientX;
       ly = e.clientY;
-      el.setPointerCapture(e.pointerId);
     });
     el.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
+      if (this.drag) {
+        this.updateCutterDrag(e);
+        return;
+      }
+      if (!dragging) {
+        el.style.cursor = this.pickCutter(e) ? 'grab' : '';
+        return;
+      }
       const dx = e.clientX - lx;
       const dy = e.clientY - ly;
       lx = e.clientX;
@@ -152,6 +295,12 @@ export class Viewport {
     });
     window.addEventListener('pointerup', () => {
       dragging = false;
+      if (this.drag) {
+        const wasDrag = this.drag.moved;
+        this.drag = null;
+        el.style.cursor = '';
+        if (wasDrag) this.onCutterDragEnd?.();
+      }
     });
     el.addEventListener(
       'wheel',
@@ -257,15 +406,25 @@ export class Viewport {
   }
 
   /** Translucent red previews of the cutter solids, rebuilt whenever params change. */
-  setGhosts(items: { solid: Solid; selected: boolean }[]): void {
+  setGhosts(items: GhostItem[]): void {
     while (this.ghosts.children.length) {
       const child = this.ghosts.children.pop() as Mesh;
       child.geometry.dispose();
     }
-    for (const { solid, selected } of items) {
+    for (const { id, solid, selected, entry } of items) {
       const mesh = new Mesh(solid.geom, selected ? this.matCutSel : this.matCut);
       mesh.applyMatrix4(solid.matrix);
+      // The ghost meshes are rebuilt on every store change, so the id — not the object —
+      // is what a drag holds on to. The entry point is carried explicitly because the
+      // mesh's own origin is the solid's centre, which sits `depth/2` down the axis.
+      mesh.userData.cutterId = id;
+      mesh.userData.entry = new Vector3(entry.x, entry.y, entry.z);
       this.ghosts.add(mesh);
     }
+  }
+
+  private entryOf(id: number): Vector3 | null {
+    const mesh = this.ghosts.children.find((c) => c.userData.cutterId === id);
+    return (mesh?.userData.entry as Vector3 | undefined) ?? null;
   }
 }

@@ -121,6 +121,8 @@ function Viewport() {
       )}
 
       <div className="border-border bg-sidebar/85 text-muted-foreground pointer-events-none absolute bottom-2.5 start-3 rounded-md border px-2.5 py-1.5 font-mono text-[11px] backdrop-blur max-sm:hidden">
+        drag a cutter to move · alt-drag for height · ⌘/ctrl snaps to 1 mm
+        <br />
         drag rotate · wheel zoom · shift/right-drag pan · drop an .stl to import
       </div>
 

@@ -40,6 +40,10 @@ node test/browser-run.mjs    # worker plumbing
 - **Scrubbing** — every numeric field is draggable. Drag its label to scrub, hold shift
   for ten times finer, alt for ten times coarser; arrow keys step by the same amounts, and
   the field still types normally.
+- **Dragging in the viewport** — grab a cutter to slide it across the bed at its current
+  height, alt-drag to raise and lower it, and hold ⌘/ctrl to snap to whole millimetres.
+  A drag is one undo step, not one per pointer event. Pressing anywhere that isn't a
+  cutter still orbits.
 - **Twist-lock sets** — three stacked cutters sharing a group id: a shaft hole, a lug
   entry notch, and a wider groove buried at the bottom. The matching pin drops through
   the shaft and notch, its lugs land in the groove, and a 90° twist locks it.
@@ -113,7 +117,7 @@ See `docs/KERF-STUDIO-DEV.md` for the full roadmap. The notable ones:
   box and gap cutters already size independently in all three directions.
 - The bayonet pin is generated from the set's stored parameters, not from manual edits
   to the three cutters it created.
-- Cutters are still positioned numerically — no dragging them in the viewport yet.
+- Cutters are dragged, but not rotated, in the viewport — rotation is numeric only.
 - No coplanar-face merging or vertex welding before export, so STLs are larger than
   necessary and carry the T-junctions described above.
 - No rounded corners on slots; sharp inside corners are stress risers in print.

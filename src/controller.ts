@@ -82,10 +82,16 @@ export class KerfController {
     return this.viewport?.ghostMatrices() ?? [];
   }
 
+  /** Where a cutter's entry point lands on screen — used by the browser tests to aim. */
+  debugProjectEntry(id: number): { x: number; y: number } | null {
+    return this.viewport?.projectEntry(id) ?? null;
+  }
+
   /** Called once the canvas element exists. */
   attachViewport(host: HTMLElement): void {
     if (this.viewport) return;
     this.viewport = new Viewport(host);
+    this.bindViewportDragging(this.viewport);
     this.refreshGhosts();
 
     this.frameBase();
@@ -122,8 +128,54 @@ export class KerfController {
     this.viewport?.setGhosts(
       s.cutters
         .filter((c) => c.enabled)
-        .map((c) => ({ solid: cutterSolid(c, s.base), selected: c.id === s.selected })),
+        .map((c) => ({
+          id: c.id,
+          solid: cutterSolid(c, s.base),
+          selected: c.id === s.selected,
+          entry: { x: c.params.x, y: c.params.y, z: c.params.z },
+        })),
     );
+  }
+
+  /**
+   * Dragging a cutter in the viewport.
+   *
+   * The whole drag is one undo step: a single committing update at the start captures
+   * the pre-drag state, and every move after that is transient. Without this a drag
+   * would leave one history entry per pointer event.
+   */
+  private bindViewportDragging(vp: Viewport): void {
+    vp.onCutterPick = (id) => {
+      this.store.update(
+        (s) => {
+          s.selected = id;
+        },
+        { transient: true },
+      );
+      this.refreshGhosts();
+    };
+
+    vp.onCutterDragStart = () => {
+      this.store.update(() => {
+        /* no change — this only opens the undo step */
+      });
+    };
+
+    vp.onCutterDragMove = (id, x, y, z) => {
+      this.store.update(
+        (s) => {
+          const c = s.cutters.find((t) => t.id === id);
+          if (!c) return;
+          c.params.x = x;
+          c.params.y = y;
+          c.params.z = z;
+        },
+        { transient: true },
+      );
+      this.requestBody();
+    };
+
+    vp.onCutterDragEnd = () => this.requestBody();
   }
 
   /** Refresh ghosts now; recompute the boolean shortly, if auto-preview is on. */

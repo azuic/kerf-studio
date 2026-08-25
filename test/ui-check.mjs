@@ -386,6 +386,124 @@ ok(
   bodyTris.trim(),
 );
 
+/* ---------------- dragging a cutter in the viewport ---------------- */
+{
+  // Put a fresh, generously sized cutter on the default box so it is a big target.
+  await evaluate("window.__kerf.newProject()");
+  await sleep(1200);
+  await clickByText('+ Round hole');
+  await sleep(800);
+  await evaluate(`(() => {
+    window.__kerf.edit(s => {
+      const c = s.cutters[s.cutters.length - 1];
+      c.params.dia = 20; c.params.depth = 30;
+      c.params.x = 0; c.params.z = 0;
+    });
+    return true;
+  })()`);
+  await sleep(900);
+
+  const entry = async () => {
+    const v = await evaluate(`(() => {
+      const c = window.__kerf.store.state.cutters.at(-1).params;
+      return [c.x, c.y, c.z];
+    })()`);
+    return v;
+  };
+
+  // Aim at where the cutter actually is on screen — it moves during these drags, so a
+  // fixed point (say the canvas centre) would miss it after the first one.
+  const screenOf = async () =>
+    evaluate(`(() => {
+      const id = window.__kerf.store.state.cutters.at(-1).id;
+      return window.__kerf.debugProjectEntry(id);
+    })()`);
+
+  const before = await entry();
+  const p = await screenOf();
+
+  async function mouse(type, x, y, buttons, modifiers = 0) {
+    await send(
+      'Input.dispatchMouseEvent',
+      { type, x, y, button: 'left', clickCount: type === 'mouseMoved' ? 0 : 1, buttons, modifiers },
+      sessionId,
+    );
+  }
+
+  await mouse('mousePressed', p.x, p.y, 1);
+  for (let i = 1; i <= 12; i++) {
+    await mouse('mouseMoved', p.x + (90 * i) / 12, p.y + (30 * i) / 12, 1);
+    await sleep(20);
+  }
+  await mouse('mouseReleased', p.x + 90, p.y + 30, 0);
+  await sleep(900);
+
+  const after = await entry();
+  const movedInPlane =
+    Math.abs(after[0] - before[0]) + Math.abs(after[2] - before[2]) > 3 &&
+    Math.abs(after[1] - before[1]) < 1e-6;
+  ok(
+    'dragging a cutter moves it across the bed, not vertically',
+    movedInPlane,
+    `[${before}] → [${after.map((n) => n.toFixed(2))}]`,
+  );
+
+  const status = await evaluate("document.querySelector('#status')?.textContent ?? ''");
+  ok('the cut follows the drag', /triangles/.test(status), status.trim());
+
+  // The whole drag has to collapse into one undo step, not one per pointer event.
+  await evaluate('window.__kerf.undo()');
+  await sleep(900);
+  const undone = await entry();
+  ok(
+    'one undo restores the pre-drag position',
+    Math.abs(undone[0] - before[0]) < 1e-6 && Math.abs(undone[2] - before[2]) < 1e-6,
+    `[${undone.map((n) => n.toFixed(2))}]`,
+  );
+
+  // Alt-drag raises it instead, leaving the footprint alone.
+  await evaluate('window.__kerf.redo()');
+  await sleep(700);
+  const beforeLift = await entry();
+  const q = await screenOf();
+  await mouse('mousePressed', q.x, q.y, 1, 1); // 1 = Alt
+  for (let i = 1; i <= 12; i++) {
+    await mouse('mouseMoved', q.x, q.y - (60 * i) / 12, 1, 1);
+    await sleep(20);
+  }
+  await mouse('mouseReleased', q.x, q.y - 60, 0, 1);
+  await sleep(900);
+  const lifted = await entry();
+  ok(
+    'alt-dragging changes height and leaves X/Z alone',
+    lifted[1] > beforeLift[1] + 1 &&
+      Math.abs(lifted[0] - beforeLift[0]) < 1e-6 &&
+      Math.abs(lifted[2] - beforeLift[2]) < 1e-6,
+    `y ${beforeLift[1].toFixed(2)} → ${lifted[1].toFixed(2)}`,
+  );
+
+  // Orbiting must still work when the press does not land on a cutter.
+  const canvasBox = await evaluate(`(() => {
+    const r = document.querySelector('canvas').getBoundingClientRect();
+    return { x: r.x + 40, y: r.y + 40 };
+  })()`);
+  const camBefore = await evaluate(
+    "JSON.stringify(window.__kerf.debugGhostMatrices()[0].slice(12,15))",
+  );
+  await mouse('mousePressed', canvasBox.x, canvasBox.y, 1);
+  await mouse('mouseMoved', canvasBox.x + 60, canvasBox.y, 1);
+  await mouse('mouseReleased', canvasBox.x + 60, canvasBox.y, 0);
+  await sleep(500);
+  const camAfter = await evaluate(
+    "JSON.stringify(window.__kerf.debugGhostMatrices()[0].slice(12,15))",
+  );
+  ok('dragging empty space orbits instead of moving a cutter', camBefore === camAfter);
+
+  // Leave a clean slate for the sections that follow.
+  await evaluate('window.__kerf.newProject()');
+  await sleep(1000);
+}
+
 for (const e of pageErrors) console.log('PAGE ERROR:', e);
 ok('no uncaught page errors', pageErrors.length === 0);
 

@@ -205,8 +205,13 @@ Still open:
 - ~~Store + undo/redo, localStorage, `.kerf.json`~~
 
 ### P1 — cutter features
-- rotX/rotZ + side-entry orientation (cut from ±X/±Z walls, not just top).
+- ~~rotX/rotZ + side-entry orientation~~ ✅ cutters carry full rotX/rotY/rotZ and a free
+  XYZ entry point; rotation pivots about the entry point.
+- ~~Drag cutters in the viewport instead of numeric-only~~ ✅ raycast onto a plane through
+  the entry point: ground drags slide across XZ, alt-drags run on a camera-facing vertical
+  plane, ⌘/ctrl snaps to 1 mm. One undo step per drag.
 - Rounded-rect slots (capsule cross-section) and corner-radius param on box cutters.
+- Rotate cutters in the viewport too (a gizmo); rotation is still numeric only.
 - Chamfer/countersink option at hole entry (cone frustum unioned onto cutter top)
   — kills elephant-foot binding on first layers.
 - Heat-set insert pocket preset (M2/M2.5/M3/M4 tables: pilot dia, depth).
