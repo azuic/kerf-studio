@@ -513,6 +513,120 @@ ok(
   await sleep(1000);
 }
 
+/* ---------------- rotation gizmo ---------------- */
+{
+  await clickByText('+ Round hole');
+  await sleep(800);
+  await evaluate(`(() => {
+    window.__kerf.edit(s => {
+      const c = s.cutters.at(-1);
+      c.params.dia = 16; c.params.depth = 24;
+      c.params.x = 0; c.params.y = 40; c.params.z = 0;
+      c.params.rotX = 0; c.params.rotY = 0; c.params.rotZ = 0;
+    });
+    return true;
+  })()`);
+  await sleep(900);
+
+  const rot = async () =>
+    evaluate(`(() => {
+      const p = window.__kerf.store.state.cutters.at(-1).params;
+      return [p.rotX, p.rotY, p.rotZ];
+    })()`);
+  const entryOf = async () =>
+    evaluate(`(() => {
+      const p = window.__kerf.store.state.cutters.at(-1).params;
+      return [p.x, p.y, p.z];
+    })()`);
+
+  ok('the gizmo is attached to the selected cutter', await evaluate('window.__kerf.debugGizmoVisible()'));
+
+  // Grab a point on one of the rings. The gizmo reports which handle is under the
+  // pointer, so hunt for a pixel where a ring actually is rather than guessing.
+  const centre = await evaluate(`(() => {
+    const id = window.__kerf.store.state.cutters.at(-1).id;
+    return window.__kerf.debugProjectEntry(id);
+  })()`);
+
+  async function mouse(type, x, y, buttons, modifiers = 0) {
+    await send(
+      'Input.dispatchMouseEvent',
+      { type, x, y, button: 'left', clickCount: type === 'mouseMoved' ? 0 : 1, buttons, modifiers },
+      sessionId,
+    );
+  }
+
+  let handle = null;
+  for (let r = 40; r <= 130 && !handle; r += 6) {
+    for (let a = 0; a < 360 && !handle; a += 10) {
+      const x = centre.x + r * Math.cos((a * Math.PI) / 180);
+      const y = centre.y + r * Math.sin((a * Math.PI) / 180);
+      await mouse('mouseMoved', x, y, 0);
+      const axis = await evaluate('window.__kerf.debugGizmoAxis()');
+      if (axis) handle = { x, y, axis };
+    }
+  }
+  ok('a gizmo ring is hoverable in the viewport', handle !== null, handle?.axis ?? 'none found');
+
+  if (handle) {
+    const before = await rot();
+    const beforeEntry = await entryOf();
+
+    await mouse('mousePressed', handle.x, handle.y, 1);
+    for (let i = 1; i <= 14; i++) {
+      const t = i / 14;
+      // Swing around the centre so the drag actually turns the ring.
+      const a0 = Math.atan2(handle.y - centre.y, handle.x - centre.x);
+      const r0 = Math.hypot(handle.x - centre.x, handle.y - centre.y);
+      const a = a0 + t * 0.9;
+      await mouse('mouseMoved', centre.x + r0 * Math.cos(a), centre.y + r0 * Math.sin(a), 1);
+      await sleep(20);
+    }
+    await mouse('mouseReleased', handle.x, handle.y, 0);
+    await sleep(900);
+
+    const after = await rot();
+    const turned = after.some((v, i) => Math.abs(v - before[i]) > 1);
+    ok('turning a ring rotates the cutter', turned, `[${before}] → [${after.map((n) => n.toFixed(1))}]`);
+
+    // The whole point of the proxy: rotation pivots about the entry point, so the hole
+    // must not wander away from where it breaks the surface.
+    const afterEntry = await entryOf();
+    ok(
+      'rotating pivots about the entry point',
+      afterEntry.every((v, i) => Math.abs(v - beforeEntry[i]) < 1e-6),
+      `[${afterEntry}]`,
+    );
+
+    // And the rendered ghost must agree with the numbers.
+    const ghostY = await evaluate(
+      '(() => { const m = window.__kerf.debugSelectedGhost(); return [m[4],m[5],m[6]]; })()',
+    );
+    const upright = Math.abs(ghostY[1] - 1) < 1e-4;
+    ok('the ghost follows the gizmo', !upright, `Y=[${ghostY.map((n) => n.toFixed(3))}]`);
+
+    // One gesture, one undo step.
+    await evaluate('window.__kerf.undo()');
+    await sleep(900);
+    const undone = await rot();
+    ok(
+      'one undo restores the pre-rotation angles',
+      undone.every((v, i) => Math.abs(v - before[i]) < 1e-6),
+      `[${undone.map((n) => n.toFixed(1))}]`,
+    );
+  }
+
+  // Hiding the gizmo detaches it.
+  await evaluate(`(() => { window.__kerf.edit(s => { s.showGizmo = false; }); return true; })()`);
+  await sleep(600);
+  ok('hiding the gizmo detaches it', !(await evaluate('window.__kerf.debugGizmoVisible()')));
+  await evaluate(`(() => { window.__kerf.edit(s => { s.showGizmo = true; }); return true; })()`);
+  await sleep(400);
+
+  await evaluate('window.__kerf.newProject()');
+  await sleep(900);
+}
+
 for (const e of pageErrors) console.log('PAGE ERROR:', e);
 ok('no uncaught page errors', pageErrors.length === 0);
 

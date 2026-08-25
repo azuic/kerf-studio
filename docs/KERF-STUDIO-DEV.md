@@ -211,7 +211,9 @@ Still open:
   the entry point: ground drags slide across XZ, alt-drags run on a camera-facing vertical
   plane, ⌘/ctrl snaps to 1 mm. One undo step per drag.
 - Rounded-rect slots (capsule cross-section) and corner-radius param on box cutters.
-- Rotate cutters in the viewport too (a gizmo); rotation is still numeric only.
+- ~~Rotate cutters in the viewport (a gizmo)~~ ✅ three's `TransformControls` in rotate
+  mode, attached to a proxy `Object3D` parked at the cutter's entry point — a ghost's own
+  origin is the solid's centre, which would swing the hole off its entry.
 - Chamfer/countersink option at hole entry (cone frustum unioned onto cutter top)
   — kills elephant-foot binding on first layers.
 - Heat-set insert pocket preset (M2/M2.5/M3/M4 tables: pilot dia, depth).

@@ -10,8 +10,10 @@ import {
   Group,
   LineBasicMaterial,
   LineSegments,
+  MathUtils,
   Mesh,
   MeshStandardMaterial,
+  Object3D,
   PerspectiveCamera,
   Plane,
   PlaneGeometry,
@@ -21,6 +23,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { GeometryPayload } from '../csg/protocol';
 import type { Solid } from '../model/geometry';
 
@@ -32,6 +35,14 @@ const AXIS_LENGTH = 40;
 
 /** Hold to snap a viewport drag to whole millimetres. */
 const SNAP_MM = 1;
+
+/** Hold to snap the rotation gizmo. */
+const GIZMO_SNAP_DEG = 15;
+
+/** Angles come back from the gizmo as raw floats; keep the numeric fields readable. */
+function round(v: number): number {
+  return Math.round(v * 1e3) / 1e3;
+}
 
 export interface GhostItem {
   id: number;
@@ -107,6 +118,20 @@ export class Viewport {
   onCutterDragMove: ((id: number, x: number, y: number, z: number) => void) | null = null;
   onCutterDragEnd: (() => void) | null = null;
 
+  /* rotation gizmo */
+  private gizmo: TransformControls | null = null;
+  /**
+   * The gizmo drives this stand-in rather than a ghost mesh, because it must pivot about
+   * the cutter's *entry point*. A ghost's own origin is the solid's centre, half its
+   * length down the axis, which would swing the hole away from where it enters.
+   */
+  private gizmoProxy = new Object3D();
+  private gizmoId: number | null = null;
+
+  onCutterRotateStart: ((id: number) => void) | null = null;
+  onCutterRotate: ((id: number, rotX: number, rotY: number, rotZ: number) => void) | null = null;
+  onCutterRotateEnd: (() => void) | null = null;
+
   constructor(host: HTMLElement) {
     this.host = host;
     this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
@@ -140,8 +165,11 @@ export class Viewport {
       ),
     );
     this.scene.add(this.ghosts);
+    this.gizmoProxy.rotation.order = 'XYZ';
+    this.scene.add(this.gizmoProxy);
 
     this.bindControls();
+    this.initGizmo();
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
     this.updateCamera();
@@ -151,6 +179,88 @@ export class Viewport {
       this.renderer.render(this.scene, this.camera);
     };
     loop();
+  }
+
+  private initGizmo(): void {
+    const g = new TransformControls(this.camera, this.renderer.domElement);
+    g.setMode('rotate');
+    // World space so the rings line up with the plate's X/Y/Z indicator and with the
+    // numeric fields, which are world-axis Euler angles.
+    g.setSpace('world');
+    g.size = 0.85;
+
+    g.addEventListener('objectChange', () => {
+      if (this.gizmoId === null) return;
+      const e = this.gizmoProxy.rotation;
+      this.onCutterRotate?.(
+        this.gizmoId,
+        round(MathUtils.radToDeg(e.x)),
+        round(MathUtils.radToDeg(e.y)),
+        round(MathUtils.radToDeg(e.z)),
+      );
+    });
+
+    g.addEventListener('dragging-changed', (ev) => {
+      const dragging = (ev as unknown as { value: boolean }).value;
+      if (dragging) {
+        if (this.gizmoId !== null) this.onCutterRotateStart?.(this.gizmoId);
+      } else {
+        this.onCutterRotateEnd?.();
+      }
+    });
+
+    // ⌘/ctrl snaps, matching the drag convention.
+    const setSnap = (on: boolean) => {
+      g.rotationSnap = on ? MathUtils.degToRad(GIZMO_SNAP_DEG) : null;
+    };
+    window.addEventListener('keydown', (e) => setSnap(e.metaKey || e.ctrlKey));
+    window.addEventListener('keyup', (e) => setSnap(e.metaKey || e.ctrlKey));
+
+    this.scene.add(g.getHelper());
+    this.gizmo = g;
+  }
+
+  gizmoAttached(): boolean {
+    return this.gizmo?.object === this.gizmoProxy && this.gizmoId !== null;
+  }
+
+  gizmoAxis(): string | null {
+    return this.gizmo?.axis ?? null;
+  }
+
+  /** True while the pointer is over a gizmo handle, or actively turning one. */
+  private gizmoBusy(): boolean {
+    return this.gizmo !== null && (this.gizmo.dragging || this.gizmo.axis !== null);
+  }
+
+  /** Point the gizmo at a cutter, or pass null to hide it. */
+  setGizmo(
+    target: {
+      id: number;
+      entry: { x: number; y: number; z: number };
+      rot: { x: number; y: number; z: number };
+    } | null,
+  ): void {
+    const g = this.gizmo;
+    if (!g) return;
+    // Never re-seat the proxy mid-turn; that would fight the handle the user is holding.
+    if (g.dragging) return;
+
+    if (!target) {
+      this.gizmoId = null;
+      g.detach();
+      return;
+    }
+    this.gizmoId = target.id;
+    this.gizmoProxy.position.set(target.entry.x, target.entry.y, target.entry.z);
+    this.gizmoProxy.rotation.set(
+      MathUtils.degToRad(target.rot.x),
+      MathUtils.degToRad(target.rot.y),
+      MathUtils.degToRad(target.rot.z),
+      'XYZ',
+    );
+    this.gizmoProxy.updateMatrixWorld(true);
+    if (g.object !== this.gizmoProxy) g.attach(this.gizmoProxy);
   }
 
   /** Pointer position in normalised device coordinates for the current canvas size. */
@@ -250,6 +360,9 @@ export class Viewport {
     let ly = 0;
 
     el.addEventListener('pointerdown', (e) => {
+      // The gizmo has its own listeners on this element; when the pointer is on one of
+      // its handles it owns the gesture, so neither orbit nor cutter-drag may start.
+      if (this.gizmoBusy()) return;
       el.setPointerCapture(e.pointerId);
 
       // A plain left press on a cutter grabs it; anything else falls through to orbit.
@@ -272,7 +385,7 @@ export class Viewport {
         return;
       }
       if (!dragging) {
-        el.style.cursor = this.pickCutter(e) ? 'grab' : '';
+        el.style.cursor = this.gizmoBusy() ? '' : this.pickCutter(e) ? 'grab' : '';
         return;
       }
       const dx = e.clientX - lx;

@@ -93,6 +93,15 @@ export class KerfController {
     return this.viewport?.projectEntry(id) ?? null;
   }
 
+  debugGizmoVisible(): boolean {
+    return this.viewport?.gizmoAttached() ?? false;
+  }
+
+  /** Which gizmo handle is under the pointer, if any — lets the tests find a ring. */
+  debugGizmoAxis(): string | null {
+    return this.viewport?.gizmoAxis() ?? null;
+  }
+
   /** Called once the canvas element exists. */
   attachViewport(host: HTMLElement): void {
     if (this.viewport) return;
@@ -141,6 +150,22 @@ export class KerfController {
           entry: { x: c.params.x, y: c.params.y, z: c.params.z },
         })),
     );
+    this.refreshGizmo();
+  }
+
+  /** The gizmo tracks the selected cutter, when it is visible and enabled. */
+  private refreshGizmo(): void {
+    const s = this.store.state;
+    const c = s.cutters.find((x) => x.id === s.selected);
+    if (!s.showGizmo || !c || !c.enabled) {
+      this.viewport?.setGizmo(null);
+      return;
+    }
+    this.viewport?.setGizmo({
+      id: c.id,
+      entry: { x: c.params.x, y: c.params.y, z: c.params.z },
+      rot: { x: c.params.rotX, y: c.params.rotY, z: c.params.rotZ },
+    });
   }
 
   /**
@@ -182,6 +207,29 @@ export class KerfController {
     };
 
     vp.onCutterDragEnd = () => this.requestBody();
+
+    // Turning the gizmo follows the same one-undo-step-per-gesture rule as dragging.
+    vp.onCutterRotateStart = () => {
+      this.store.update(() => {
+        /* no change — this only opens the undo step */
+      });
+    };
+
+    vp.onCutterRotate = (id, rotX, rotY, rotZ) => {
+      this.store.update(
+        (s) => {
+          const c = s.cutters.find((t) => t.id === id);
+          if (!c) return;
+          c.params.rotX = rotX;
+          c.params.rotY = rotY;
+          c.params.rotZ = rotZ;
+        },
+        { transient: true },
+      );
+      this.requestBody();
+    };
+
+    vp.onCutterRotateEnd = () => this.requestBody();
   }
 
   /** Refresh ghosts now; recompute the boolean shortly, if auto-preview is on. */

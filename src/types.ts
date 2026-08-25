@@ -112,6 +112,8 @@ export interface AppState {
   selected: number | null;
   insert: InsertSpec & { generated: boolean; label: string };
   autoPreview: boolean;
+  /** Show the rotation gizmo on the selected cutter. */
+  showGizmo: boolean;
 }
 
 export function initialState(): AppState {
@@ -138,6 +140,7 @@ export function initialState(): AppState {
     selected: null,
     insert: { source: null, clearance: 0.2, withCap: true, generated: false, label: '' },
     autoPreview: true,
+    showGizmo: true,
   };
 }
 

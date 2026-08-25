@@ -201,9 +201,12 @@ function CutterProps({ cutter }: { cutter: Cutter }) {
         <ScrubInput label="Z" unit="mm" value={P.z} onChange={set('z')} step={0.25} />
       </Row>
 
-      <p className="text-muted-foreground mb-1 text-[10px] font-medium tracking-wider uppercase">
-        Rotation
-      </p>
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <p className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
+          Rotation
+        </p>
+        <GizmoToggle />
+      </div>
       <Row>
         <ScrubInput label="Rot X" unit="°" value={P.rotX} onChange={set('rotX')} step={1} />
         <ScrubInput label="Rot Y" unit="°" value={P.rotY} onChange={set('rotY')} step={1} />
@@ -238,6 +241,25 @@ function CutterProps({ cutter }: { cutter: Cutter }) {
         </Hint>
       )}
     </div>
+  );
+}
+
+function GizmoToggle() {
+  const kerf = useKerf();
+  const on = useAppState().showGizmo;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      className="text-muted-foreground hover:text-foreground text-[10px] font-medium tracking-wider uppercase underline-offset-2 hover:underline"
+      onClick={() =>
+        kerf.edit((s) => {
+          s.showGizmo = !s.showGizmo;
+        })
+      }
+    >
+      {on ? 'Hide gizmo' : 'Show gizmo'}
+    </button>
   );
 }
 

@@ -42,8 +42,12 @@ node test/browser-run.mjs    # worker plumbing
   the field still types normally.
 - **Dragging in the viewport** — grab a cutter to slide it across the bed at its current
   height, alt-drag to raise and lower it, and hold ⌘/ctrl to snap to whole millimetres.
-  A drag is one undo step, not one per pointer event. Pressing anywhere that isn't a
-  cutter still orbits.
+  Pressing anywhere that isn't a cutter still orbits.
+- **Rotation gizmo** — the selected cutter gets rings for all three axes, centred on its
+  entry point so turning it aims the hole without moving where it enters. ⌘/ctrl snaps to
+  15°. Hide it from the Rotation row if it's in the way.
+
+  Both gestures are one undo step each, not one per pointer event.
 - **Twist-lock sets** — three stacked cutters sharing a group id: a shaft hole, a lug
   entry notch, and a wider groove buried at the bottom. The matching pin drops through
   the shaft and notch, its lugs land in the groove, and a 90° twist locks it.
@@ -117,7 +121,7 @@ See `docs/KERF-STUDIO-DEV.md` for the full roadmap. The notable ones:
   box and gap cutters already size independently in all three directions.
 - The bayonet pin is generated from the set's stored parameters, not from manual edits
   to the three cutters it created.
-- Cutters are dragged, but not rotated, in the viewport — rotation is numeric only.
+- The base model can't be transformed in the viewport, only cutters.
 - No coplanar-face merging or vertex welding before export, so STLs are larger than
   necessary and carry the T-junctions described above.
 - No rounded corners on slots; sharp inside corners are stress risers in print.
