@@ -214,8 +214,13 @@ function CutterProps({ cutter }: { cutter: Cutter }) {
         <Button variant="outline" size="sm" onClick={() => snapToTop(kerf, cutter.id)}>
           Snap to top
         </Button>
-        <Button variant="outline" size="sm" onClick={() => aimDown(kerf, cutter.id)}>
-          Aim down
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={P.rotX === 0 && P.rotY === 0 && P.rotZ === 0}
+          onClick={() => resetRotation(kerf, cutter.id)}
+        >
+          Reset rotation
         </Button>
         <Button variant="outline" size="sm" onClick={() => duplicate(kerf, cutter.id)}>
           Duplicate
@@ -314,11 +319,13 @@ function snapToTop(kerf: KerfController, id: number): void {
   });
 }
 
-function aimDown(kerf: KerfController, id: number): void {
+/** Square the cutter back to the bed — all three axes, not just the tilt. */
+function resetRotation(kerf: KerfController, id: number): void {
   kerf.edit((s) => {
     const c = s.cutters.find((x) => x.id === id);
     if (!c) return;
     c.params.rotX = 0;
+    c.params.rotY = 0;
     c.params.rotZ = 0;
   });
 }

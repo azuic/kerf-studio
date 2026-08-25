@@ -108,6 +108,10 @@ function Viewport() {
         <Swatch color="#9AA3AA" label="body" />
         <Swatch color="#E5484D" label="cutters" />
         <Swatch color="#2467D6" label="insert" />
+        <span className="bg-border w-px self-stretch" aria-hidden />
+        <Swatch color="#D9730D" label="X" />
+        <Swatch color="#00963B" label="Y" />
+        <Swatch color="#2467D6" label="Z" />
       </div>
 
       {view.busy && (

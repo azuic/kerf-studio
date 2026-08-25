@@ -1,6 +1,8 @@
 import {
   AmbientLight,
+  AxesHelper,
   BufferGeometry,
+  Color,
   DirectionalLight,
   EdgesGeometry,
   Float32BufferAttribute,
@@ -21,6 +23,9 @@ import type { Solid } from '../model/geometry';
 
 /** Bambu P1S build plate, used as the viewport's size reference. */
 const PLATE = 256;
+
+/** Long enough to read at a glance, short enough not to crowd a small part. */
+const AXIS_LENGTH = 40;
 
 export class Viewport {
   readonly scene = new Scene();
@@ -78,6 +83,19 @@ export class Viewport {
     this.scene.add(key, fill, new AmbientLight(0xffffff, 0.45));
 
     this.scene.add(new GridHelper(PLATE, 16, 0xb9c1c7, 0xd3d9dd));
+
+    // At the default camera azimuth both world X and Z project diagonally on screen, so
+    // an axis-aligned cutter can read as skewed. These make the bed's axes unambiguous.
+    // Red is deliberately avoided — it is the cutter colour.
+    const axes = new AxesHelper(AXIS_LENGTH);
+    axes.setColors(
+      new Color(0xd9730d), // X — orange
+      new Color(0x00963b), // Y — green
+      new Color(0x2467d6), // Z — blue
+    );
+    // Lift a hair off the plate so the grid does not z-fight with the axis lines.
+    axes.position.y = 0.02;
+    this.scene.add(axes);
     this.scene.add(
       new LineSegments(
         new EdgesGeometry(new PlaneGeometry(PLATE, PLATE).rotateX(-Math.PI / 2)),
@@ -228,6 +246,14 @@ export class Viewport {
     if (!payload || payload.triangles === 0) return;
     this.insertMesh = new Mesh(Viewport.geometryFrom(payload), this.matInsert);
     this.scene.add(this.insertMesh);
+  }
+
+  /** World matrices of the current cutter ghosts, for debugging and tests. */
+  ghostMatrices(): number[][] {
+    return this.ghosts.children.map((c) => {
+      c.updateMatrixWorld(true);
+      return [...c.matrixWorld.elements];
+    });
   }
 
   /** Translucent red previews of the cutter solids, rebuilt whenever params change. */

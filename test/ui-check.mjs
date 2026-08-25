@@ -154,6 +154,26 @@ const has = async (label) =>
 ok('a new cutter exposes all three rotation axes', (await has('Rot X')) && (await has('Rot Z')));
 ok('and all three position axes', (await has('X')) && (await has('Y')) && (await has('Z')));
 
+/* ---------------- a fresh cutter is square to the bed ---------------- */
+// Measured from the rendered ghost's world matrix, not from the params it was built
+// from — that is the only way to catch a transform that skews on the way to the screen.
+const basis = await evaluate(`(() => {
+  const m = window.__kerf.debugGhostMatrices()[0];
+  if (!m) return null;
+  const col = i => [m[i*4], m[i*4+1], m[i*4+2]].map(v => Math.round(v * 1e6) / 1e6);
+  return { x: col(0), y: col(1), z: col(2) };
+})()`);
+const axisAligned =
+  basis &&
+  JSON.stringify(basis.x) === '[1,0,0]' &&
+  JSON.stringify(basis.y) === '[0,1,0]' &&
+  JSON.stringify(basis.z) === '[0,0,1]';
+ok(
+  'an unrotated cutter renders square to the bed',
+  axisAligned,
+  basis ? `X=${basis.x} Y=${basis.y} Z=${basis.z}` : 'no ghost',
+);
+
 /* ---------------- drag to scrub ---------------- */
 async function drag(label, dx, modifiers = 0) {
   const p = await labelBox(label);
@@ -189,6 +209,33 @@ const rotBefore = Number(await fieldValue('Rot X'));
 await drag('Rot X', 20);
 const rotAfter = Number(await fieldValue('Rot X'));
 ok('rotation scrubs too', Math.abs(rotAfter - (rotBefore + 20)) < 1.1, `${rotBefore}° → ${rotAfter}°`);
+
+// ...and that rotation must actually reach the ghost, then be undoable in one click.
+// A rotation about X leaves the X axis alone, so the tilt shows up in the Y column:
+// 20° about X puts local Y at [0, cos20, sin20].
+const tiltedY = await evaluate(
+  '(() => { const m = window.__kerf.debugGhostMatrices()[0]; return [m[4],m[5],m[6]]; })()',
+);
+const rad = (20 * Math.PI) / 180;
+ok(
+  'the rotation reaches the ghost',
+  Math.abs(tiltedY[1] - Math.cos(rad)) < 0.02 && Math.abs(tiltedY[2] - Math.sin(rad)) < 0.02,
+  `Y=[${tiltedY.map((n) => n.toFixed(3)).join(', ')}]`,
+);
+
+await clickByText('Reset rotation');
+await sleep(500);
+const resetBasis = await evaluate(`(() => {
+  const m = window.__kerf.debugGhostMatrices()[0];
+  const col = i => [m[i*4], m[i*4+1], m[i*4+2]].map(v => Math.round(v * 1e6) / 1e6);
+  return [col(0), col(1), col(2)];
+})()`);
+ok(
+  'Reset rotation squares it back up on every axis',
+  JSON.stringify(resetBasis) === '[[1,0,0],[0,1,0],[0,0,1]]',
+  JSON.stringify(resetBasis),
+);
+ok('and clears the rotation fields', Number(await fieldValue('Rot X')) === 0);
 
 // Scrubbing must actually reach the geometry, not just the input.
 const statusAfterScrub = await evaluate("document.querySelector('#status')?.textContent ?? ''");

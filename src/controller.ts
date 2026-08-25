@@ -71,6 +71,11 @@ export class KerfController {
     });
   }
 
+  /** Ghost world matrices — used by the browser tests to check cutter orientation. */
+  debugGhostMatrices(): number[][] {
+    return this.viewport?.ghostMatrices() ?? [];
+  }
+
   /** Called once the canvas element exists. */
   attachViewport(host: HTMLElement): void {
     if (this.viewport) return;

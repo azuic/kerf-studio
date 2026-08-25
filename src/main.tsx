@@ -20,6 +20,9 @@ dark.addEventListener('change', (e) => syncTheme(e.matches));
 // is created once — StrictMode's double-invoke must not spin up a second worker.
 const controller = new KerfController();
 
+// Handle for the browser tests and for poking at state in the console.
+(window as unknown as { __kerf: KerfController }).__kerf = controller;
+
 createRoot(root).render(
   <StrictMode>
     <KerfProvider value={controller}>
