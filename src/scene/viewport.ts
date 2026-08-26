@@ -39,6 +39,9 @@ const SNAP_MM = 1;
 /** Hold to snap the rotation gizmo. */
 const GIZMO_SNAP_DEG = 15;
 
+/** Opaque enough to read the form, sheer enough to see a hole buried inside it. */
+const BODY_XRAY_OPACITY = 0.34;
+
 /** Angles come back from the gizmo as raw floats; keep the numeric fields readable. */
 function round(v: number): number {
   return Math.round(v * 1e3) / 1e3;
@@ -239,6 +242,25 @@ export class Viewport {
     this.gizmoLoading = false;
     // A target may have been requested while this was loading.
     this.applyGizmoTarget();
+  }
+
+  /**
+   * X-ray: render the body translucent so cutters buried inside it stay visible.
+   *
+   * `depthWrite` has to go off with it. A transparent surface that still writes depth
+   * would occlude the ghosts behind it just as the opaque one did, which is the whole
+   * problem this solves.
+   */
+  setXray(on: boolean): void {
+    this.matBody.transparent = on;
+    this.matBody.opacity = on ? BODY_XRAY_OPACITY : 1;
+    this.matBody.depthWrite = !on;
+    this.matBody.needsUpdate = true;
+  }
+
+  /** Body opacity, for the browser tests. */
+  bodyOpacity(): number {
+    return this.matBody.opacity;
   }
 
   gizmoAttached(): boolean {
@@ -521,6 +543,9 @@ export class Viewport {
     }
     if (!payload || payload.triangles === 0) return;
     this.bodyMesh = new Mesh(Viewport.geometryFrom(payload), this.matBody);
+    // Draw the body before the ghosts so that in x-ray they blend on top of it rather
+    // than fighting for order by centroid distance.
+    this.bodyMesh.renderOrder = 1;
     this.scene.add(this.bodyMesh);
   }
 
@@ -560,6 +585,7 @@ export class Viewport {
       // mesh's own origin is the solid's centre, which sits `depth/2` down the axis.
       mesh.userData.cutterId = id;
       mesh.userData.entry = new Vector3(entry.x, entry.y, entry.z);
+      mesh.renderOrder = 2;
       this.ghosts.add(mesh);
     }
   }

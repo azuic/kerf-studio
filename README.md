@@ -54,6 +54,9 @@ node test/browser-run.mjs    # worker plumbing
 - **Mating inserts** — the selected hole's profile shrunk by a per-side clearance, with
   an optional cap or knob. 0.20 mm suits a P1S with a 0.4 mm nozzle; 0.10–0.15 for press
   fits, 0.30 for free rotation.
+- **See-through body** — cutters sit *inside* the model once placed, where an opaque
+  surface hides them. The body renders sheer by default so a buried hole, groove or
+  bayonet stays visible while you position it; toggle it off to inspect the solid.
 - **Export** — binary STL in millimetres. What you see in the viewport is what exports.
 - **Projects** — undo/redo, autosave to the browser, and `.kerf.json` save/load.
 

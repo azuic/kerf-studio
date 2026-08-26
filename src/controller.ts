@@ -93,6 +93,10 @@ export class KerfController {
     return this.viewport?.projectEntry(id) ?? null;
   }
 
+  debugBodyOpacity(): number {
+    return this.viewport?.bodyOpacity() ?? 1;
+  }
+
   debugGizmoVisible(): boolean {
     return this.viewport?.gizmoAttached() ?? false;
   }
@@ -151,6 +155,7 @@ export class KerfController {
         })),
     );
     this.refreshGizmo();
+    this.viewport?.setXray(s.xray);
   }
 
   /** The gizmo tracks the selected cutter, when it is visible and enabled. */

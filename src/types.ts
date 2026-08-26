@@ -114,6 +114,8 @@ export interface AppState {
   autoPreview: boolean;
   /** Show the rotation gizmo on the selected cutter. */
   showGizmo: boolean;
+  /** Render the body translucent so buried cutters are visible inside it. */
+  xray: boolean;
 }
 
 export function initialState(): AppState {
@@ -141,6 +143,7 @@ export function initialState(): AppState {
     insert: { source: null, clearance: 0.2, withCap: true, generated: false, label: '' },
     autoPreview: true,
     showGizmo: true,
+    xray: true,
   };
 }
 

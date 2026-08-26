@@ -634,6 +634,26 @@ ok(
   await sleep(900);
 }
 
+/* ---------------- see-through body ---------------- */
+{
+  await clickByText('+ Twist-lock (bayonet) set');
+  await sleep(1200);
+
+  const opacity = async () => evaluate('window.__kerf.debugBodyOpacity()');
+  ok('the body is see-through by default', (await opacity()) < 1, `opacity ${await opacity()}`);
+
+  await evaluate("document.querySelector('[data-testid=xray-toggle]').click()");
+  await sleep(600);
+  ok('toggling it off makes the body solid again', (await opacity()) === 1);
+
+  await evaluate("document.querySelector('[data-testid=xray-toggle]').click()");
+  await sleep(600);
+  ok('and back on', (await opacity()) < 1);
+
+  await evaluate('window.__kerf.newProject()');
+  await sleep(900);
+}
+
 for (const e of pageErrors) console.log('PAGE ERROR:', e);
 ok('no uncaught page errors', pageErrors.length === 0);
 

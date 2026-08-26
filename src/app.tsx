@@ -1,6 +1,7 @@
+import { EyeIcon, EyeOffIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useKerf, useViewState } from '@/kerf-context';
+import { useAppState, useKerf, useViewState } from '@/kerf-context';
 import { BasePanel } from '@/panels/BasePanel';
 import { CutterPanel } from '@/panels/CutterPanel';
 import { ExportPanel, ProjectPanel } from '@/panels/ExportPanel';
@@ -114,6 +115,8 @@ function Viewport() {
         <Swatch color="#2467D6" label="Z" />
       </div>
 
+      <XrayToggle />
+
       {view.busy && (
         <div className="bg-primary text-primary-foreground pointer-events-none absolute end-3 top-3 rounded-md px-2.5 py-1.5 font-mono text-[11px]">
           computing boolean…
@@ -147,6 +150,36 @@ function Viewport() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Cutters sit inside the body once they are placed, where an opaque surface hides them.
+ * This makes the body sheer so a buried hole, groove or bayonet stays visible while you
+ * position it — and off again to inspect the solid you are about to export.
+ */
+function XrayToggle() {
+  const kerf = useKerf();
+  const on = useAppState().xray;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      data-testid="xray-toggle"
+      title="Show cutters through the body"
+      className={cn(
+        'border-border bg-sidebar/85 absolute start-3 top-12 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] backdrop-blur',
+        on ? 'text-foreground' : 'text-muted-foreground',
+      )}
+      onClick={() =>
+        kerf.edit((s) => {
+          s.xray = !s.xray;
+        })
+      }
+    >
+      {on ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
+      See-through body
+    </button>
   );
 }
 
