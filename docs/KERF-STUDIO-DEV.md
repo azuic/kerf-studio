@@ -219,7 +219,6 @@ Still open:
 - Heat-set insert pocket preset (M2/M2.5/M3/M4 tables: pilot dia, depth).
 - Hex preset tied to standard nut sizes (M3 AF 5.5, M4 AF 7, M5 AF 8) + nut-trap depth.
 - Counterbore preset (stacked cyl: screw shaft + head recess) — reuse group mechanic.
-- Drag cutters in the viewport (raycast onto top plane) instead of numeric-only.
 
 ### P2 — joints & inserts
 - Regenerate bayonet pin from live cutter params (single source of truth).
