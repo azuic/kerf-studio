@@ -26,7 +26,7 @@ self.onmessage = (e: MessageEvent<CsgRequest>) => {
 
     const payload =
       req.kind === 'body'
-        ? buildBody(req.base, req.cutters, stlPositions)
+        ? buildBody(req.base, req.cutters, stlPositions, req.clearances)
         : buildInsert(req.recipe, req.clearance, req.withCap, req.px);
 
     post(

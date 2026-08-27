@@ -8,6 +8,7 @@ import {
 } from 'three';
 import type { BaseSpec, Cutter, CutterParams } from '../types';
 import { baseHeight, baseSpanX } from '../types';
+import { ZERO_CLEARANCE, type ResolvedClearance } from './clearance';
 
 /**
  * A positioned solid: geometry in its own local frame plus the matrix that places it
@@ -114,10 +115,11 @@ const DEG = Math.PI / 180;
  * is what makes "aim the hole" behave the way you expect — the hole stays where it
  * breaks the surface while its far end swings.
  */
-export function cutterMatrix(p: CutterParams): Matrix4 {
+export function cutterMatrix(p: CutterParams, depthGrow = 0): Matrix4 {
   // The solid is built centred on its own origin, so shift it back by half its length
-  // to put the entry face — not the centre — on the anchor point.
-  const centreAlongAxis = (p.overshoot - p.depth) / 2;
+  // to put the entry face — not the centre — on the anchor point. A deepened socket
+  // grows away from the entry, so the extra depth shifts the centre further down.
+  const centreAlongAxis = (p.overshoot - p.depth - depthGrow) / 2;
   const rotation = new Matrix4().makeRotationFromEuler(
     new Euler(p.rotX * DEG, p.rotY * DEG, p.rotZ * DEG, 'XYZ'),
   );
@@ -126,38 +128,62 @@ export function cutterMatrix(p: CutterParams): Matrix4 {
     .multiply(translation(0, centreAlongAxis, 0));
 }
 
-/** A cutter solid, positioned. */
-export function cutterSolid(c: Cutter, _b: BaseSpec): Solid {
+/**
+ * A cutter solid, positioned — the shape that is actually subtracted, and the shape the
+ * red ghost draws.
+ *
+ * In `socket` mode the resolved clearance inflates it here, so the ghost keeps showing
+ * exactly what gets cut. In `insert` mode (today's default) `socketGrow` is zero and the
+ * cutter is its drawn size.
+ */
+export function cutterSolid(
+  c: Cutter,
+  _b: BaseSpec,
+  clearance: ResolvedClearance = ZERO_CLEARANCE,
+): Solid {
   const p = c.params;
-  const h = p.depth + p.overshoot;
+  const grow = clearance.socketGrow;
+  // Depth grows on one end only — the cut mouth stays put, the floor drops.
+  const h = p.depth + grow.axial + p.overshoot;
 
   let geom: BufferGeometry;
   if (c.type === 'cyl' || c.type === 'groove') {
-    const r = Math.max(0.05, (p.dia ?? 10) / 2);
+    const r = Math.max(0.05, ((p.dia ?? 10) + grow.radial) / 2);
     geom = new CylinderGeometry(r, r, h, RADIAL_SEGMENTS);
   } else if (c.type === 'hex') {
-    const R = Math.max(0.05, (p.af ?? 10) / 2) / Math.cos(Math.PI / 6);
+    const R = Math.max(0.05, ((p.af ?? 10) + grow.radial) / 2) / Math.cos(Math.PI / 6);
     geom = new CylinderGeometry(R, R, h, 6);
   } else {
-    geom = new BoxGeometry(Math.max(0.05, p.w ?? 10), h, Math.max(0.05, p.l ?? 10));
+    geom = new BoxGeometry(
+      Math.max(0.05, (p.w ?? 10) + grow.radial),
+      h,
+      Math.max(0.05, (p.l ?? 10) + grow.radial),
+    );
   }
 
-  return solid(geom, cutterMatrix(p));
+  return solid(geom, cutterMatrix(p, grow.axial));
 }
 
 /* ------------------------------------------------------------------ *
  * Mating inserts — every piece is unioned into one part.
  * ------------------------------------------------------------------ */
 
-/** Twist-lock pin: shaft + lug bar + optional knob, parked beside the body. */
+/**
+ * Twist-lock pin: shaft + lug bar + optional knob, parked beside the body.
+ *
+ * Per the clearance model, the bayonet is the one cutter that uses all three axes:
+ * radial for the shaft against the bore, tangential for the lug width against the slot
+ * (that is the rotational slop), axial for the lug thickness against the groove height.
+ */
 export function bayonetPinSolids(
   P: { dia: number; lugW: number; lugLen: number; grooveH: number; depth: number },
-  clearance: number,
+  clearance: ResolvedClearance,
   withCap: boolean,
   px: number,
 ): Solid[] {
-  const shaftH = Math.max(1, P.depth - clearance);
-  const shaftR = Math.max(0.5, (P.dia - 2 * clearance) / 2);
+  const shrink = clearance.insertShrink;
+  const shaftH = Math.max(1, P.depth - shrink.axial);
+  const shaftR = Math.max(0.5, (P.dia - shrink.radial) / 2);
   const out: Solid[] = [
     solid(
       new CylinderGeometry(shaftR, shaftR, shaftH, RADIAL_SEGMENTS),
@@ -165,9 +191,11 @@ export function bayonetPinSolids(
     ),
   ];
 
-  const lugTh = Math.max(0.8, P.grooveH - 0.6);
-  const lugW = Math.max(0.8, P.lugW - 2 * clearance);
-  const lugSpan = Math.max(1, P.dia + 2 * (P.lugLen - clearance));
+  // 0.6 mm is the printed-layer allowance that keeps the lug clear of the groove roof;
+  // the axial clearance is what the user controls on top of it.
+  const lugTh = Math.max(0.8, P.grooveH - 0.6 - shrink.axial);
+  const lugW = Math.max(0.8, P.lugW - shrink.tangential);
+  const lugSpan = Math.max(1, P.dia + 2 * P.lugLen - shrink.radial);
   out.push(solid(new BoxGeometry(lugSpan, lugTh, lugW), translation(px, lugTh / 2, 0)));
 
   if (withCap) {
@@ -186,27 +214,28 @@ export function bayonetPinSolids(
 /** Plain insert: the hole's own cross-section shrunk by `clearance` per side. */
 export function cutterInsertSolids(
   c: Cutter,
-  clearance: number,
+  clearance: ResolvedClearance,
   withCap: boolean,
   px: number,
 ): Solid[] {
   const p = c.params;
-  const h = Math.max(1, p.depth - clearance);
+  const shrink = clearance.insertShrink;
+  const h = Math.max(1, p.depth - shrink.axial);
   const out: Solid[] = [];
 
   if (c.type === 'cyl' || c.type === 'groove') {
-    const r = Math.max(0.5, ((p.dia ?? 10) - 2 * clearance) / 2);
+    const r = Math.max(0.5, ((p.dia ?? 10) - shrink.radial) / 2);
     out.push(solid(new CylinderGeometry(r, r, h, RADIAL_SEGMENTS), translation(px, h / 2, 0)));
   } else if (c.type === 'hex') {
-    const R = Math.max(0.5, ((p.af ?? 10) - 2 * clearance) / 2) / Math.cos(Math.PI / 6);
+    const R = Math.max(0.5, ((p.af ?? 10) - shrink.radial) / 2) / Math.cos(Math.PI / 6);
     out.push(solid(new CylinderGeometry(R, R, h, 6), translation(px, h / 2, 0)));
   } else {
     out.push(
       solid(
         new BoxGeometry(
-          Math.max(0.5, (p.w ?? 10) - 2 * clearance),
+          Math.max(0.5, (p.w ?? 10) - shrink.radial),
           h,
-          Math.max(0.5, (p.l ?? 10) - 2 * clearance),
+          Math.max(0.5, (p.l ?? 10) - shrink.radial),
         ),
         translation(px, h / 2, 0),
       ),

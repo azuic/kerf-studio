@@ -654,6 +654,83 @@ ok(
   await sleep(900);
 }
 
+/* ---------------- clearance ---------------- */
+{
+  await clickByText('+ Round hole');
+  await sleep(900);
+  await evaluate(`(() => {
+    window.__kerf.edit(s => {
+      const c = s.cutters.at(-1);
+      c.params.dia = 12; c.params.depth = 20;
+    });
+    return true;
+  })()`);
+  await sleep(900);
+
+  const projectValue = async () =>
+    evaluate('window.__kerf.store.state.clearance.value');
+  const projectMode = async () => evaluate('window.__kerf.store.state.clearance.mode');
+  const cutterOverride = async () =>
+    evaluate('window.__kerf.store.state.cutters.at(-1).clearance ?? null');
+
+  ok('the project default is insert mode', (await projectMode()) === 'insert');
+  ok('and a cutter inherits it', (await cutterOverride()) === null);
+
+  // In insert mode the ghost is the drawn size; in socket mode it must grow with the gap.
+  const ghostWidth = async () =>
+    evaluate(`(() => {
+      const id = window.__kerf.store.state.cutters.at(-1).id;
+      const g = window.__kerf.debugGhostMatrices().find(x => x.id === id);
+      return g ? Math.round(g.matrix[0] * 1e6) / 1e6 : null;
+    })()`);
+
+  const beforeVol = await evaluate("document.querySelector('#status')?.textContent ?? ''");
+  await evaluate(`(() => { window.__kerf.edit(s => { s.clearance.mode = 'socket'; }); return true; })()`);
+  await sleep(1200);
+  ok('switching to socket mode recomputes the body', (await projectMode()) === 'socket', beforeVol.trim());
+
+  // Override one cutter and confirm it no longer follows the project value.
+  await evaluate("document.querySelector('[data-testid=clearance-override]').click()");
+  await sleep(900);
+  ok('a cutter can override the project clearance', (await cutterOverride()) !== null);
+
+  await evaluate(`(() => { window.__kerf.edit(s => { s.clearance.value = 1.5; }); return true; })()`);
+  await sleep(900);
+  const own = await cutterOverride();
+  ok(
+    'the overridden cutter ignores the project value',
+    own && own.value !== 1.5,
+    `project 1.5, cutter ${own?.value}`,
+  );
+  ok('project value did change', (await projectValue()) === 1.5);
+
+  // Releasing the override goes back to inheriting.
+  await evaluate("document.querySelector('[data-testid=clearance-override]').click()");
+  await sleep(900);
+  ok('releasing the override restores inheritance', (await cutterOverride()) === null);
+
+  ok('no ghost was lost along the way', (await ghostWidth()) !== null);
+
+  // Generating an insert end-to-end through the UI. This was silently broken: the store
+  // mutates arrays in place, so a useMemo keyed on `state.cutters` never invalidated and
+  // the source list stayed empty no matter how many holes existed.
+  ok(
+    'adding a hole populates the insert source',
+    (await evaluate('window.__kerf.store.state.insert.source')) !== null,
+  );
+  await clickByText('Generate insert');
+  for (let i = 0; i < 30; i++) {
+    await sleep(300);
+    if (/Insert ready/.test(await evaluate("document.querySelector('#status')?.textContent ?? ''")))
+      break;
+  }
+  const insertStatus = await evaluate("document.querySelector('#status')?.textContent ?? ''");
+  ok('Generate insert produces a part', /Insert ready/.test(insertStatus), insertStatus.trim());
+
+  await evaluate('window.__kerf.newProject()');
+  await sleep(900);
+}
+
 for (const e of pageErrors) console.log('PAGE ERROR:', e);
 ok('no uncaught page errors', pageErrors.length === 0);
 

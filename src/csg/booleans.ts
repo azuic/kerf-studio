@@ -8,6 +8,7 @@ import {
   cutterSolid,
   type Solid,
 } from '../model/geometry';
+import { ZERO_CLEARANCE, type ResolvedClearance } from '../model/clearance';
 import type { BaseSpec, BayonetParams, Cutter } from '../types';
 import type { GeometryPayload, InsertRecipe } from './protocol';
 
@@ -71,6 +72,7 @@ export function buildBody(
   base: BaseSpec,
   cutters: Cutter[],
   stlPositions: Float32Array | null,
+  clearances: Record<number, ResolvedClearance> = {},
 ): GeometryPayload {
   const { outer, inner } = baseSolids(base, stlPositions);
   if (!outer) return emptyPayload();
@@ -78,7 +80,9 @@ export function buildBody(
   let acc = toBrush(outer);
   if (inner) acc = apply(acc, inner, SUBTRACTION);
   for (const c of cutters) {
-    if (c.enabled) acc = apply(acc, cutterSolid(c, base), SUBTRACTION);
+    if (c.enabled) {
+      acc = apply(acc, cutterSolid(c, base, clearances[c.id] ?? ZERO_CLEARANCE), SUBTRACTION);
+    }
   }
 
   const payload = payloadFrom(acc.geometry as BufferGeometry);
@@ -89,7 +93,7 @@ export function buildBody(
 /** Mating part: the shaft/lug/knob pieces (or the shrunk hole profile) unioned together. */
 export function buildInsert(
   recipe: InsertRecipe,
-  clearance: number,
+  clearance: ResolvedClearance,
   withCap: boolean,
   px: number,
 ): GeometryPayload {

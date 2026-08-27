@@ -1,3 +1,4 @@
+import type { ResolvedClearance } from '../model/clearance';
 import type { BaseSpec, Cutter } from '../types';
 import type { CsgRequest, CsgResponse, GeometryPayload, InsertRecipe } from './protocol';
 
@@ -79,7 +80,11 @@ export class CsgEngine {
   }
 
   /** Base minus every enabled cutter. Rejects with StaleRequestError if superseded. */
-  body(base: BaseSpec, cutters: Cutter[]): Promise<GeometryPayload> {
+  body(
+    base: BaseSpec,
+    cutters: Cutter[],
+    clearances: Record<number, ResolvedClearance>,
+  ): Promise<GeometryPayload> {
     const id = ++this.seq;
 
     // Drop any body request that has not come back yet — its result is already obsolete.
@@ -96,12 +101,13 @@ export class CsgEngine {
       kind: 'body',
       base: structuredClone(base),
       cutters: structuredClone(cutters),
+      clearances: structuredClone(clearances),
     });
   }
 
   insert(
     recipe: InsertRecipe,
-    clearance: number,
+    clearance: ResolvedClearance,
     withCap: boolean,
     px: number,
   ): Promise<GeometryPayload> {

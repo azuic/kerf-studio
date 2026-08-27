@@ -51,6 +51,7 @@ export function LabeledSelect<T extends string>({
   onChange,
   className,
   testId,
+  disabled,
 }: {
   label: string;
   value: T;
@@ -58,6 +59,7 @@ export function LabeledSelect<T extends string>({
   onChange: (value: T) => void;
   className?: string;
   testId?: string;
+  disabled?: boolean;
 }) {
   const collection = useMemo(
     () => createListCollection({ items: options as Option<T>[] }),
@@ -72,6 +74,7 @@ export function LabeledSelect<T extends string>({
       <Select
         collection={collection}
         value={[value]}
+        disabled={disabled}
         onValueChange={(d) => {
           const next = d.value[0] as T | undefined;
           if (next) onChange(next);

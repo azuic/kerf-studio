@@ -51,9 +51,15 @@ node test/browser-run.mjs    # worker plumbing
 - **Twist-lock sets** — three stacked cutters sharing a group id: a shaft hole, a lug
   entry notch, and a wider groove buried at the bottom. The matching pin drops through
   the shaft and notch, its lugs land in the groove, and a 90° twist locks it.
-- **Mating inserts** — the selected hole's profile shrunk by a per-side clearance, with
-  an optional cap or knob. 0.20 mm suits a P1S with a 0.4 mm nozzle; 0.10–0.15 for press
-  fits, 0.30 for free rotation.
+- **Mating inserts** — the selected hole's profile, offset by the clearance, with an
+  optional cap or knob.
+- **Clearance** — a *derivation* parameter, never geometry: inserts are a pure function of
+  (cutter, resolved clearance) and regenerate whenever either changes. Values are the
+  **total** gap, so 0.40 mm leaves 0.20 mm on each side of a round hole. Pick a fit preset
+  or type a number; individual cutters can override the project default. "Applied by"
+  chooses which side absorbs the gap — shrinking the insert leaves your hole exactly as
+  drawn (the default, and what keeps the cutter ghost truthful), growing the hole is what
+  a real nut or bearing needs. See `docs/KERF-STUDIO-CLEARANCE.md`.
 - **See-through body** — cutters sit *inside* the model once placed, where an opaque
   surface hides them. The body renders sheer by default so a buried hole, groove or
   bayonet stays visible while you position it; toggle it off to inspect the solid.

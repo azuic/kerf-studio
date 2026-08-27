@@ -25,6 +25,7 @@ import {
   parseSTL,
 } from '../src/io/stl';
 import { BURIED_OVERSHOOT, cutterMatrix, defaultParams } from '../src/model/geometry';
+import { ZERO_CLEARANCE, resolveClearance, splitGap } from '../src/model/clearance';
 import { migrateState } from '../src/state/migrate';
 import type { BaseSpec, Cutter } from '../src/types';
 import { initialState } from '../src/types';
@@ -97,6 +98,11 @@ function cutter(over: Partial<Cutter> & { type: Cutter['type'] }, base: BaseSpec
     params: defaultParams(over.type, base),
     ...over,
   };
+}
+
+/** A resolved clearance from a single total-gap value, in the default insert mode. */
+function spec(total: number, mode: 'insert' | 'socket' | 'split' = 'insert') {
+  return resolveClearance({ type: 'cyl', clearance: { value: total, mode } }, initialState());
 }
 
 /** Area of a regular n-gon inscribed in radius r — the cylinders are faceted, not round. */
@@ -237,8 +243,8 @@ console.log('\nbayonet set: shaft + lug entry + buried groove');
 console.log('\ntwist-lock pin (union of shaft + lug + knob)');
 {
   const P = { dia: 12, lugW: 4, lugLen: 3.2, lugTh: 3, grooveH: 3.6, depth: 12, x: 0, z: 0 };
-  const withKnob = buildInsert({ kind: 'group', params: P }, 0.2, true, 60);
-  const noKnob = buildInsert({ kind: 'group', params: P }, 0.2, false, 60);
+  const withKnob = buildInsert({ kind: 'group', params: P }, spec(0.4), true, 60);
+  const noKnob = buildInsert({ kind: 'group', params: P }, spec(0.4), false, 60);
   ok('produces triangles', withKnob.triangles > 0, `${withKnob.triangles} tris`);
   closed('pin', withKnob.position);
   ok('has positive volume', volume(withKnob.position) > 0, `${volume(withKnob.position).toFixed(1)} mm³`);
@@ -246,7 +252,7 @@ console.log('\ntwist-lock pin (union of shaft + lug + knob)');
 
   // The pin's shaft must clear the shaft hole it drops into.
   const shaftHole = ngonArea(P.dia / 2, 48) * P.depth;
-  const shaftPin = ngonArea((P.dia - 2 * 0.2) / 2, 48) * (P.depth - 0.2);
+  const shaftPin = ngonArea((P.dia - 0.4) / 2, 48) * (P.depth - 0.4);
   ok('shaft is undersized by the clearance', shaftPin < shaftHole);
 }
 
@@ -256,16 +262,16 @@ console.log('\nplain insert fits its hole');
   const c = cutter({ type: 'cyl' }, base);
   c.params = { ...c.params, dia: 10, depth: 15 };
   const clearance = 0.2;
-  const ins = buildInsert({ kind: 'cutter', cutter: c }, clearance, false, 60);
+  const ins = buildInsert({ kind: 'cutter', cutter: c }, spec(clearance), false, 60);
   closed('insert', ins.position);
   near(
     'volume = shrunk shaft',
     volume(ins.position),
-    ngonArea((10 - 2 * clearance) / 2, 48) * (15 - clearance),
+    ngonArea((10 - clearance) / 2, 48) * (15 - clearance),
     0.5,
   );
 
-  const bigger = buildInsert({ kind: 'cutter', cutter: c }, 0.05, false, 60);
+  const bigger = buildInsert({ kind: 'cutter', cutter: c }, spec(0.1), false, 60);
   ok('tighter clearance means more material', volume(bigger.position) > volume(ins.position));
 }
 
@@ -443,6 +449,166 @@ console.log('\nimported STL orientation');
   );
   const twice = centerOnPlate(orientToYUp(zUpFile, 'z'));
   near('re-orienting is idempotent', twice.maxY, 40, 0.01);
+}
+
+console.log('\nclearance: which side absorbs the gap');
+{
+  const base = baseOf({ type: 'box', w: 60, d: 60, h: 30 });
+  const c = cutter({ type: 'cyl' }, base);
+  c.params = { ...c.params, dia: 10, depth: 15 };
+  const gap = 0.4;
+  const solidVol = 60 * 60 * 30;
+
+  // insert mode: the hole is exactly as drawn, the pin shrinks.
+  const insertMode = spec(gap, 'insert');
+  const holeInsertMode = buildBody(base, [c], null, { [c.id]: insertMode });
+  near(
+    'insert mode leaves the hole at nominal',
+    volume(holeInsertMode.position),
+    solidVol - ngonArea(5, 48) * 15,
+    0.05,
+  );
+  near(
+    'insert mode shrinks the pin by the whole gap',
+    volume(buildInsert({ kind: 'cutter', cutter: c }, insertMode, false, 60).position),
+    ngonArea((10 - gap) / 2, 48) * (15 - gap),
+    0.5,
+  );
+
+  // socket mode: the hole grows, the pin is exactly as drawn.
+  const socketMode = spec(gap, 'socket');
+  const holeSocketMode = buildBody(base, [c], null, { [c.id]: socketMode });
+  near(
+    'socket mode grows the hole by the whole gap',
+    volume(holeSocketMode.position),
+    solidVol - ngonArea((10 + gap) / 2, 48) * (15 + gap),
+    0.1,
+  );
+  near(
+    'socket mode leaves the pin at nominal',
+    volume(buildInsert({ kind: 'cutter', cutter: c }, socketMode, false, 60).position),
+    ngonArea(5, 48) * 15,
+    0.5,
+  );
+
+  // Whichever side absorbs it, the fit is the same: hole minus pin is one gap.
+  const bore = (m: ReturnType<typeof spec>) => 10 + m.socketGrow.radial;
+  const pin = (m: ReturnType<typeof spec>) => 10 - m.insertShrink.radial;
+  for (const mode of ['insert', 'socket', 'split'] as const) {
+    const m = spec(gap, mode);
+    near(`${mode}: bore − pin = the gap`, bore(m) - pin(m), gap, 0.001);
+  }
+
+  // split halves it both ways.
+  const s = splitGap(gap, 'split');
+  ok('split mode halves each way', s.grow === gap / 2 && s.shrink === gap / 2);
+  closed('socket-mode body', holeSocketMode.position);
+}
+
+console.log('\nclearance: inheritance and override');
+{
+  const state = { ...initialState(), clearance: { value: 0.5, mode: 'insert' as const } };
+  const plain = cutter({ type: 'cyl' }, state.base);
+  const overridden = cutter({ type: 'cyl', id: 2, clearance: { value: 0.1, mode: 'socket' } }, state.base);
+
+  const a = resolveClearance(plain, state);
+  const b = resolveClearance(overridden, state);
+  ok('a plain cutter inherits the project value', a.axes.radial === 0.5 && !a.overridden);
+  ok('an overriding cutter uses its own', b.axes.radial === 0.1 && b.overridden);
+  ok('and its own mode', b.mode === 'socket' && b.socketGrow.radial === 0.1);
+
+  // Per-axis overrides fall back to `value` for anything omitted.
+  const perAxis = resolveClearance(
+    cutter({ type: 'cyl', id: 3, clearance: { value: 0.4, mode: 'insert', axes: { axial: 0.1 } } }, state.base),
+    state,
+  );
+  ok(
+    'an omitted axis falls back to the single value',
+    perAxis.axes.radial === 0.4 && perAxis.axes.tangential === 0.4 && perAxis.axes.axial === 0.1,
+  );
+
+  // A zero-clearance cutter must cut exactly its drawn size.
+  const base = baseOf({ type: 'box', w: 40, d: 40, h: 20 });
+  const exact = cutter({ type: 'cyl', id: 4 }, base);
+  exact.params = { ...exact.params, dia: 8, depth: 10 };
+  near(
+    'zero clearance cuts the drawn size',
+    volume(buildBody(base, [exact], null, { [exact.id]: ZERO_CLEARANCE }).position),
+    40 * 40 * 20 - ngonArea(4, 48) * 10,
+    0.05,
+  );
+}
+
+console.log('\nclearance: bayonet uses all three axes');
+{
+  const P = { dia: 12, lugW: 4, lugLen: 3.2, lugTh: 3, grooveH: 3.6, depth: 12, x: 0, z: 0 };
+  const perAxis = resolveClearance(
+    {
+      type: 'cyl',
+      clearance: { value: 0.4, mode: 'insert', axes: { radial: 0.4, tangential: 0.1, axial: 0.2 } },
+    },
+    initialState(),
+  );
+  const pin = buildInsert({ kind: 'group', params: P }, perAxis, false, 60);
+  closed('per-axis pin', pin.position);
+
+  // Tangential is the lug width — the rotational slop — and must be independent of radial.
+  const wide = resolveClearance(
+    { type: 'cyl', clearance: { value: 0.4, mode: 'insert', axes: { tangential: 1.2 } } },
+    initialState(),
+  );
+  const slimmer = buildInsert({ kind: 'group', params: P }, wide, false, 60);
+  ok(
+    'more tangential clearance means a narrower lug',
+    volume(slimmer.position) < volume(pin.position),
+    `${volume(slimmer.position).toFixed(1)} < ${volume(pin.position).toFixed(1)} mm³`,
+  );
+}
+
+console.log('\nclearance: migrating a v1 project preserves geometry exactly');
+{
+  // A genuine v1 project: no `clearance` or `presets` keys at all, just one number on
+  // the insert spec, applied per side radially (dia − 2c) but once axially (depth − c).
+  // Built literally rather than by spreading initialState(), which would smuggle in the
+  // very fields the migration is supposed to synthesise.
+  const legacy = {
+    base: baseOf({ type: 'box', w: 60, d: 60, h: 30 }),
+    cutters: [],
+    groups: {},
+    nextId: 1,
+    nextGroup: 1,
+    selected: null,
+    insert: { source: null, clearance: 0.2, withCap: false, generated: false, label: '' },
+    autoPreview: true,
+  };
+  const migrated = migrateState(legacy as never);
+
+  ok('the old value doubles into a total-gap radial', migrated.clearance.axes?.radial === 0.4);
+  ok('and stays as-is axially', migrated.clearance.axes?.axial === 0.2);
+  ok('mode stays insert, so no hole changes size', migrated.clearance.mode === 'insert');
+
+  // The real assertion: an insert built from the migrated spec is identical to what the
+  // old per-side code produced.
+  const c = cutter({ type: 'cyl' }, migrated.base);
+  c.params = { ...c.params, dia: 10, depth: 15 };
+  const after = buildInsert(
+    { kind: 'cutter', cutter: c },
+    resolveClearance(c, migrated),
+    false,
+    60,
+  );
+  const legacyShape = ngonArea((10 - 2 * 0.2) / 2, 48) * (15 - 0.2);
+  near('migrated insert matches the v1 geometry', volume(after.position), legacyShape, 0.5);
+
+  // And the body is untouched, because insert mode never grows a hole.
+  near(
+    'migrated body is unchanged',
+    volume(buildBody(migrated.base, [c], null, { [c.id]: resolveClearance(c, migrated) }).position),
+    60 * 60 * 30 - ngonArea(5, 48) * 15,
+    0.05,
+  );
+
+  ok('migrating twice is stable', migrateState(migrated).clearance.axes?.radial === 0.4);
 }
 
 console.log('\nSTL round-trip');

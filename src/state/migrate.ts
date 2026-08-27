@@ -33,11 +33,40 @@ export function migrateState(raw: Partial<AppState> | undefined): AppState {
     ...raw,
     base: { ...base.base, ...raw.base },
     insert: { ...base.insert, ...raw.insert },
+    clearance: raw.clearance ?? migrateClearance(raw),
+    presets: raw.presets?.length ? raw.presets : base.presets,
   };
 
   const modelTop = baseHeight(state.base);
   state.cutters = (raw.cutters ?? []).map((c) => migrateCutter(c, modelTop));
   return state;
+}
+
+/** The pre-clearance-model shape: one number on the insert spec, applied per side. */
+interface LegacyInsert {
+  clearance?: number;
+}
+
+/**
+ * Convert the old single `insert.clearance` into a ClearanceSpec that produces byte-for-
+ * byte identical geometry.
+ *
+ * The old code was not self-consistent: radially it subtracted the value from *each*
+ * side (`dia - 2c`, a total gap of 2c), but axially it subtracted it once
+ * (`depth - c`, a total gap of c). The new model states every value as a total gap, so
+ * preserving both needs an explicit per-axis spec — a single number cannot express it.
+ *
+ * Tangential had no old equivalent; bayonet lug width used the radial `2c` rule, so it
+ * inherits the same doubled value.
+ */
+function migrateClearance(raw: Partial<AppState>): AppState['clearance'] {
+  const legacy = (raw.insert as LegacyInsert | undefined)?.clearance;
+  if (typeof legacy !== 'number') return initialState().clearance;
+  return {
+    value: legacy * 2,
+    mode: 'insert',
+    axes: { radial: legacy * 2, tangential: legacy * 2, axial: legacy },
+  };
 }
 
 function migrateCutter(c: Cutter, modelTop: number): Cutter {

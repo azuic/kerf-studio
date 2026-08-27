@@ -58,6 +58,55 @@ export interface Cutter {
   /** Bayonet set membership, e.g. "G1". Null for loose cutters. */
   group: string | null;
   params: CutterParams;
+  /**
+   * Omitted means inherit `AppState.clearance`. Present means this cutter overrides it,
+   * and the UI shows an "overridden" badge.
+   */
+  clearance?: ClearanceSpec;
+}
+
+/* ------------------------------------------------------------------ *
+ * Clearance
+ *
+ * Clearance is a *derivation parameter*, never geometry: inserts are a pure
+ * function of (cutter, resolved clearance) and are regenerated whenever either
+ * changes. See docs/KERF-STUDIO-CLEARANCE.md.
+ * ------------------------------------------------------------------ */
+
+/** Which side of the pair absorbs the gap. */
+export type ClearanceMode =
+  | 'socket' // socket inflated by the gap, insert stays nominal
+  | 'insert' // insert deflated by the gap, socket stays nominal
+  | 'split'; // half each way
+
+/** Per-axis gap in mm. Every value is the TOTAL gap, not per side. */
+export interface ClearanceAxes {
+  /** Diameter / width growth, perpendicular to the cutter axis. */
+  radial: number;
+  /** Bayonet lug width vs slot width — rotational slop. */
+  tangential: number;
+  /** Depth, and lug thickness vs slot height. */
+  axial: number;
+}
+
+export interface ClearanceSpec {
+  /** The single user-facing number, mm. Drives every axis unless `axes` overrides it. */
+  value: number;
+  mode: ClearanceMode;
+  /** Optional per-axis override; any axis left out falls back to `value`. */
+  axes?: Partial<ClearanceAxes>;
+  /** The preset this came from, for UI labelling only. */
+  presetId?: string;
+}
+
+export interface ClearancePreset {
+  id: string;
+  label: string;
+  material: string;
+  fit: 'press' | 'slip' | 'rotating' | 'loose';
+  spec: ClearanceSpec;
+  /** Filled in by the tolerance-coupon workflow once the user calibrates. */
+  calibrated?: { date: string; nozzle: number; layerHeight: number; note?: string };
 }
 
 export interface BayonetParams {
@@ -99,7 +148,6 @@ export type InsertSource =
 
 export interface InsertSpec {
   source: InsertSource | null;
-  clearance: number;
   withCap: boolean;
 }
 
@@ -110,12 +158,46 @@ export interface AppState {
   nextId: number;
   nextGroup: number;
   selected: number | null;
+  /** Project-wide default; individual cutters may override it. */
+  clearance: ClearanceSpec;
+  presets: ClearancePreset[];
   insert: InsertSpec & { generated: boolean; label: string };
   autoPreview: boolean;
   /** Show the rotation gizmo on the selected cutter. */
   showGizmo: boolean;
   /** Render the body translucent so buried cutters are visible inside it. */
   xray: boolean;
+}
+
+/**
+ * Starting values for a 0.4 mm nozzle on a P1S. Users are expected to replace these by
+ * calibrating with a tolerance coupon.
+ *
+ * These are the spec's table with every value doubled, because the spec states a
+ * total-gap convention but lists the familiar *per-side* FDM numbers (0.10 / 0.20 /
+ * 0.30 / 0.40). Read as totals those would halve every fit — a "slip fit" at 0.1 mm per
+ * side is a press fit in practice. Doubling keeps the fit names honest under the
+ * total-gap convention, and keeps `pla-slip` identical to what this app shipped before
+ * clearance became a first-class model.
+ */
+export function builtInPresets(): ClearancePreset[] {
+  const p = (
+    id: string,
+    label: string,
+    material: string,
+    fit: ClearancePreset['fit'],
+    value: number,
+  ): ClearancePreset => ({ id, label, material, fit, spec: { value, mode: 'insert', presetId: id } });
+
+  return [
+    p('pla-press', 'PLA · Press fit', 'PLA', 'press', 0.2),
+    p('pla-slip', 'PLA · Slip fit', 'PLA', 'slip', 0.4),
+    p('pla-rotating', 'PLA · Rotating fit', 'PLA', 'rotating', 0.6),
+    p('pla-loose', 'PLA · Loose', 'PLA', 'loose', 0.8),
+    p('petg-slip', 'PETG · Slip fit', 'PETG', 'slip', 0.5),
+    p('petg-rotating', 'PETG · Rotating fit', 'PETG', 'rotating', 0.7),
+    p('tpu-slip', 'TPU 95A · Slip fit', 'TPU 95A', 'slip', 0.7),
+  ];
 }
 
 export function initialState(): AppState {
@@ -140,7 +222,9 @@ export function initialState(): AppState {
     nextId: 1,
     nextGroup: 1,
     selected: null,
-    insert: { source: null, clearance: 0.2, withCap: true, generated: false, label: '' },
+    clearance: { value: 0.4, mode: 'insert', presetId: 'pla-slip' },
+    presets: builtInPresets(),
+    insert: { source: null, withCap: true, generated: false, label: '' },
     autoPreview: true,
     showGizmo: true,
     xray: true,

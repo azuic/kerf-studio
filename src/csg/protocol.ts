@@ -1,3 +1,4 @@
+import type { ResolvedClearance } from '../model/clearance';
 import type { BaseSpec, BayonetParams, Cutter } from '../types';
 
 /**
@@ -17,6 +18,11 @@ export interface BodyRequest {
   kind: 'body';
   base: BaseSpec;
   cutters: Cutter[];
+  /**
+   * Clearance per cutter id, resolved on the main thread. In `socket` mode this inflates
+   * the cut; the worker never resolves clearance itself, so both sides cannot disagree.
+   */
+  clearances: Record<number, ResolvedClearance>;
 }
 
 export type InsertRecipe =
@@ -27,7 +33,7 @@ export interface InsertRequest {
   id: number;
   kind: 'insert';
   recipe: InsertRecipe;
-  clearance: number;
+  clearance: ResolvedClearance;
   withCap: boolean;
   /** X offset that parks the preview clear of the body. */
   px: number;

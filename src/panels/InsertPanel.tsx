@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { Hint, LabeledSelect, Row, Section, type Option } from '@/components/Field';
-import { ScrubInput } from '@/components/ScrubInput';
 import { Button } from '@/components/ui/button';
 import { Checkbox, CheckboxIndicator } from '@/components/ui/checkbox';
 import { useAppState, useKerf, useViewState } from '@/kerf-context';
+import { ProjectClearance } from '@/panels/ClearanceControls';
 import type { AppState, InsertSource } from '@/types';
 
 function encode(src: InsertSource): string {
@@ -35,9 +35,13 @@ export function InsertPanel() {
   const state = useAppState();
   const view = useViewState();
 
-  const options = useMemo(() => sourceOptions(state), [state.groups, state.cutters]);
+  // Deliberately not memoised on `state.cutters` / `state.groups`. The store mutates in
+  // place — `cutters.push(...)` keeps the same array identity — so an identity-keyed memo
+  // never invalidates and the list silently stays empty. The computation is two maps.
+  const options = sourceOptions(state);
   const wanted = state.insert.source ? encode(state.insert.source) : '';
   const valid = options.some((o) => o.value === wanted);
+  const signature = options.map((o) => o.value).join(',');
 
   // The chosen source can vanish (cutter deleted, project loaded) — adopt the first.
   useEffect(() => {
@@ -51,7 +55,8 @@ export function InsertPanel() {
         { transient: true },
       );
     }
-  }, [valid, options, kerf]);
+    // Keyed on the option *values*, not the freshly-built array's identity.
+  }, [valid, signature, kerf]);
 
   const current = valid ? wanted : (options[0]?.value ?? '');
 
@@ -71,22 +76,9 @@ export function InsertPanel() {
             }
           }}
         />
-        <ScrubInput
-          label="Clearance / side"
-          unit="mm"
-          value={state.insert.clearance}
-          onChange={(v) =>
-            kerf.store.update(
-              (s) => {
-                s.insert.clearance = Math.max(0, v);
-              },
-              { coalesce: 'insert:clearance' },
-            )
-          }
-          step={0.01}
-          min={0}
-        />
       </Row>
+
+      <ProjectClearance />
 
       <label className="mb-2 flex items-center gap-2 text-[12.5px]">
         <Checkbox
@@ -117,9 +109,10 @@ export function InsertPanel() {
       </div>
 
       <Hint>
-        The insert copies the selected hole&rsquo;s shape shrunk by the clearance on every side, so
-        it snaps or twist-locks into the printed cavity. 0.20 mm suits a P1S with a 0.4 mm nozzle;
-        use 0.10–0.15 for press fits, 0.30 for free rotation.
+        Clearance is the <em>total</em> gap between hole and insert, so 0.40 mm leaves 0.20 mm
+        on each side of a round hole. &ldquo;Applied by&rdquo; chooses which side absorbs it:
+        shrinking the insert leaves your hole exactly as drawn, growing the hole is what a
+        real nut or bearing needs. Individual cutters can override this.
       </Hint>
     </Section>
   );

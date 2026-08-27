@@ -14,6 +14,7 @@ import {
 import type { Cutter, CutterParams, CutterType } from '@/types';
 import { baseHeight } from '@/types';
 import { cn } from '@/lib/utils';
+import { CutterClearance } from '@/panels/ClearanceControls';
 
 const ADD_BUTTONS: { type: CutterType; label: string }[] = [
   { type: 'cyl', label: '+ Round hole' },
@@ -213,7 +214,9 @@ function CutterProps({ cutter }: { cutter: Cutter }) {
         <ScrubInput label="Rot Z" unit="°" value={P.rotZ} onChange={set('rotZ')} step={1} />
       </Row>
 
-      <div className="mt-1 flex flex-wrap gap-2">
+      <CutterClearance cutter={cutter} />
+
+      <div className="mt-2 flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => snapToTop(kerf, cutter.id)}>
           Snap to top
         </Button>

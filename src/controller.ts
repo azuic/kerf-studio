@@ -8,6 +8,11 @@ import {
   saveAutosave,
 } from './io/project';
 import { downloadSTL, parseSTL } from './io/stl';
+import {
+  resolveClearance,
+  resolveGroupClearance,
+  type ResolvedClearance,
+} from './model/clearance';
 import { cutterSolid } from './model/geometry';
 import { Viewport } from './scene/viewport';
 import { getOrientedStl, getStlRaw, hasStl, setStlRaw } from './state/assets';
@@ -142,14 +147,26 @@ export class KerfController {
 
   /* ---------------- geometry pipeline ---------------- */
 
+  /**
+   * Clearance resolved once per cutter, on this thread. The worker is handed the result
+   * rather than the spec, so the ghosts and the boolean can never disagree about it.
+   */
+  private clearanceMap(): Record<number, ResolvedClearance> {
+    const s = this.store.state;
+    const out: Record<number, ResolvedClearance> = {};
+    for (const c of s.cutters) out[c.id] = resolveClearance(c, s);
+    return out;
+  }
+
   private refreshGhosts(): void {
     const s = this.store.state;
+    const clearances = this.clearanceMap();
     this.viewport?.setGhosts(
       s.cutters
         .filter((c) => c.enabled)
         .map((c) => ({
           id: c.id,
-          solid: cutterSolid(c, s.base),
+          solid: cutterSolid(c, s.base, clearances[c.id]),
           selected: c.id === s.selected,
           entry: { x: c.params.x, y: c.params.y, z: c.params.z },
         })),
@@ -280,7 +297,7 @@ export class KerfController {
     try {
       await this.ensureWorkerStl();
       const s = this.store.state;
-      const payload = await this.engine.body(s.base, s.cutters);
+      const payload = await this.engine.body(s.base, s.cutters, this.clearanceMap());
       this.bodyPayload = payload;
       this.viewport?.setBody(payload);
       return payload;
@@ -306,6 +323,7 @@ export class KerfController {
 
     let recipe: InsertRecipe;
     let label: string;
+    let clearance: ResolvedClearance;
     if (src.kind === 'group') {
       const params = s.groups[src.groupId];
       if (!params) {
@@ -314,6 +332,9 @@ export class KerfController {
       }
       recipe = { kind: 'group', params };
       label = 'twist-lock pin';
+      // A set inherits from whichever of its cutters carries an override, if any.
+      const member = s.cutters.find((c) => c.group === src.groupId && c.clearance);
+      clearance = resolveGroupClearance(s, member?.clearance);
     } else {
       const cutter = s.cutters.find((c) => c.id === src.cutterId);
       if (!cutter) {
@@ -322,13 +343,14 @@ export class KerfController {
       }
       recipe = { kind: 'cutter', cutter };
       label = `${cutter.name} insert`;
+      clearance = resolveClearance(cutter, s);
     }
 
     this.patchView({ busy: true });
     try {
       const payload = await this.engine.insert(
         recipe,
-        s.insert.clearance,
+        clearance,
         s.insert.withCap,
         insertPreviewX(s.base),
       );
